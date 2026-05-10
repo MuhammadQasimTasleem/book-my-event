@@ -37,6 +37,13 @@ class Booking(BaseModel):
         related_name="bookings",
     )
     event_date = models.DateField()
+    event_time = models.TimeField(null=True, blank=True)
+    guest_count = models.PositiveIntegerField(default=1)
+    event_type = models.CharField(max_length=200, blank=True)
+    price_breakdown = models.JSONField(default=list, blank=True)
+    total_estimate = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
     booking_status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
@@ -44,6 +51,10 @@ class Booking(BaseModel):
         max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID
     )
     notes = models.TextField(blank=True)
+    organizer_notes = models.TextField(
+        blank=True,
+        help_text="Message from organizer to the client (visible on the booking).",
+    )
 
     def clean(self):
         if not self.service and not self.package:

@@ -1,0 +1,19 @@
+# Start PostgreSQL matching backend/.env (DB_USER, DB_PASSWORD, DB_NAME, DB_PORT).
+# From this folder: docker compose up -d
+# Then: python manage.py migrate
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - bme_pgdata:/var/lib/postgresql/data
+
+volumes:
+  bme_pgdata:

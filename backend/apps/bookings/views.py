@@ -13,6 +13,8 @@ from .services import notify_client_booking_status, notify_organizer_new_booking
 class BookingViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
+    filterset_fields = ("booking_status", "service", "organizer", "client")
+    ordering = ("-created_at",)
 
     def get_queryset(self):
         user = self.request.user
@@ -30,7 +32,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), IsBookingOwnerOrOrganizer()]
 
     def perform_create(self, serializer):
-        booking = serializer.save(client=self.request.user)
+        booking = serializer.save()
         notify_organizer_new_booking(booking)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrganizer])

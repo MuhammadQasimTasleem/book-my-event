@@ -1,8 +1,10 @@
+from decimal import Decimal
 from typing import Iterable
 
 from django.db import transaction
 
 from apps.services.models import Service
+from apps.services.pricing import TIER_KEYS
 from apps.services.services import get_category_price_stats
 from .models import EventPackage, PackageItem
 
@@ -12,7 +14,15 @@ def _build_suggestion(items_breakdown: list[dict]) -> list[str]:
     tiers = {item["tier"] for item in items_breakdown}
     if "luxury" in tiers:
         suggestions.append("Switch luxury items to moderate tier to reduce cost.")
-    if any(item["min_price"] == 0 for item in items_breakdown):
+    if any(item.get("unavailable") for item in items_breakdown):
+        suggestions.append(
+            "Some selections are unavailable or have no rate for this tier — "
+            "they are excluded from the total; pick another listing or organizer."
+        )
+    if any(
+        not item.get("unavailable") and item.get("min_price", 0) == 0
+        for item in items_breakdown
+    ):
         suggestions.append("Add more services to generate a reliable estimate.")
     return suggestions
 
@@ -30,11 +40,50 @@ def estimate_items(items: Iterable[dict]) -> dict:
         quantity = int(item.get("quantity", 1))
 
         if service:
-            price = float(service.price) * quantity
-            min_price = price
-            max_price = price
-            title = service.title
-            category_name = service.category.name
+            tp = getattr(service, "tier_prices", None) or {}
+            t = str(tier or Service.Tier.MODERATE)
+            if t not in TIER_KEYS:
+                t = Service.Tier.MODERATE
+            raw_p = tp.get(t)
+            unit_dec = Decimal(str(raw_p if raw_p not in (None, "") else service.price))
+            unit_float = float(unit_dec)
+            pricing_missing = unit_float <= 0
+            organizer_unavailable = not bool(getattr(service, "availability", True))
+            line_unavailable = organizer_unavailable or pricing_missing
+
+            title = service.listing_title()
+            st = (getattr(service, "service_type", None) or "").strip()
+            category_name = st or (
+                service.category.name if service.category else "Service"
+            )
+
+            if line_unavailable:
+                price = 0.0
+                min_price = 0.0
+                max_price = 0.0
+                unavailable_reason = "not_offered" if organizer_unavailable else "no_rate"
+            else:
+                price = unit_float * quantity
+                unavailable_reason = None
+                # Market range: other organizers listing the same category + pricing unit.
+                if service.category_id:
+                    peer_qs = Service.objects.filter(
+                        category_id=service.category_id,
+                        pricing_unit=service.pricing_unit,
+                        availability=True,
+                    )
+                else:
+                    peer_qs = Service.objects.filter(pk=service.pk)
+                line_amounts: list[float] = []
+                for p in peer_qs:
+                    ptp = getattr(p, "tier_prices", None) or {}
+                    praw = ptp.get(t)
+                    punit = Decimal(str(praw if praw not in (None, "") else p.price))
+                    line_amounts.append(float(punit) * quantity)
+                if not line_amounts:
+                    line_amounts = [price]
+                min_price = min(line_amounts)
+                max_price = max(line_amounts)
         else:
             stats = get_category_price_stats(category, tier)
             price = stats["avg"] * quantity
@@ -43,22 +92,30 @@ def estimate_items(items: Iterable[dict]) -> dict:
             title = category.name
             category_name = category.name
 
-        breakdown.append(
-            {
-                "title": title,
-                "category": category_name,
-                "tier": tier,
-                "quantity": quantity,
-                "estimated_price": round(price, 2),
-                "min_price": round(min_price, 2),
-                "max_price": round(max_price, 2),
-            }
-        )
+        row = {
+            "title": title,
+            "category": category_name,
+            "tier": tier,
+            "quantity": quantity,
+            "estimated_price": round(price, 2),
+            "min_price": round(min_price, 2),
+            "max_price": round(max_price, 2),
+            "unavailable": line_unavailable if service else False,
+        }
+        if service and line_unavailable:
+            row["unavailable_reason"] = unavailable_reason
+        breakdown.append(row)
         total += price
         min_total += min_price
         max_total += max_price
 
     suggestions = _build_suggestion(breakdown)
+    if any(
+        item.get("min_price", 0) < item.get("max_price", 0) - 0.01 for item in breakdown
+    ):
+        suggestions.append(
+            "Line ranges show low–high across organizers in the same category for your tier."
+        )
 
     return {
         "total": round(total, 2),

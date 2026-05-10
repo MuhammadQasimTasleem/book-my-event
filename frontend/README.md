@@ -1,36 +1,98 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Book My Event
 
-## Getting Started
+A Next.js (App Router) front-end for **Book My Event** — an event management platform that connects clients with verified organizers across catering, decor, photography, music, venues, and planning.
 
-First, run the development server:
+The UI is inspired by the **Acaro – Catering & Event Planner** WordPress theme: warm cream, deep espresso, and gold accents with elegant serif typography.
+
+## Stack
+
+- **Next.js 15** (App Router) + **React 18** + **TypeScript**
+- **Tailwind CSS 3** for styling (Acaro-inspired design tokens)
+- **lucide-react** for icons
+- Local mock data in `src/lib/data.ts` (swap for a real database later)
+
+## Pages included
+
+Public:
+
+- `/` — Home (hero, categories, about strip, signature services, how it works, stats, recent events, testimonials, CTA)
+- `/about` — About, team, values
+- `/services` — Filterable services list (by category, city, keyword)
+- `/services/[id]` — Service detail + booking sidebar
+- `/venues` — Venue showcase
+- `/package-builder` — Build a custom package with **live budget estimation**
+- `/faq` — Frequently asked questions
+- `/contact` — Contact form
+- `/login`, `/register` — Auth (with role selection)
+
+Dashboards:
+
+- `/dashboard` — Workspace selector
+- `/dashboard/client` — Overview, upcoming bookings, suggestions, activity
+- `/dashboard/client/bookings` — All bookings table
+- `/dashboard/client/messages` — Real-time-style chat
+- `/dashboard/organizer` — Requests, my services, earnings
+- `/dashboard/admin` — Verify organizers, moderate flagged reviews, system stats
+
+## FRS coverage
+
+| FR group | Where it lives |
+|---|---|
+| FR-1 User Account Management | `/login`, `/register`, `/dashboard/*/profile` (shell) |
+| FR-2 Role Management | Role selector in `/register` + role-based dashboards |
+| FR-3 Service Provider | `/dashboard/organizer` + `services` table |
+| FR-4 Discovery & Search | `/services` filter + home search bar |
+| FR-5 Package Customization | `/package-builder` |
+| FR-6 Budget Estimation | `/package-builder` (live total) |
+| FR-7 Booking Management | Service detail + organizer requests table |
+| FR-8 Real-time Communication | `/dashboard/client/messages` |
+| FR-9 Notifications | Activity feed + unread badges |
+| FR-10 Reviews & Ratings | Service detail + admin moderation |
+| FR-11 Admin Management | `/dashboard/admin` |
+| FR-12 Data Management | Mock data in `src/lib/data.ts` |
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+src/
+  app/
+    layout.tsx           # root layout w/ fonts + header/footer
+    page.tsx             # home
+    about/, services/, venues/, faq/, contact/
+    package-builder/     # interactive builder w/ live budget
+    login/, register/
+    dashboard/
+      layout.tsx         # shared sidebar
+      client/, organizer/, admin/
+  components/
+    site-header.tsx, site-footer.tsx
+    section-heading.tsx, page-hero.tsx
+    service-card.tsx, stat-card.tsx
+  lib/
+    data.ts              # mock data + helpers
+```
 
-## Learn More
+## Theme tokens (tailwind.config.ts)
 
-To learn more about Next.js, take a look at the following resources:
+- `cream` 50–300 — backgrounds
+- `espresso` 50–400 — dark surfaces, headlines
+- `gold` 50–500 — accent (primary action: `gold-300`)
+- Fonts: **Playfair Display** (display), **Inter** (body), **Dancing Script** (eyebrow)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Next steps to make it production-ready
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Add a real auth provider (NextAuth / Clerk)
+2. Wire to a database (Prisma + Postgres / Supabase) — replace `src/lib/data.ts`
+3. Real-time chat via Supabase Realtime / Pusher / Socket.IO
+4. Email notifications (Resend / Postmark)
+5. Image uploads for organizer portfolios (UploadThing / S3)
+6. Payment integration for booking deposits (Stripe / Easypaisa)

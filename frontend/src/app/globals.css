@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FBF7F1;
+  --ink: #1A1410;
+  --muted: #7A6B5E;
+  --gold: #C9A961;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: #C9A961;
+  color: #1A1410;
+}
+
+@layer components {
+  .container-x {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10;
+  }
+
+  .h-display {
+    @apply font-serif font-medium tracking-tight text-ink;
+  }
+
+  .eyebrow {
+    @apply font-script text-2xl text-gold-300;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-espresso-200 px-7 py-3.5 text-sm font-medium uppercase tracking-[0.18em] text-cream-50 transition hover:bg-gold-300 hover:text-espresso-200 focus:outline-none focus:ring-2 focus:ring-gold-300 focus:ring-offset-2 focus:ring-offset-cream-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-espresso-200/30 px-7 py-3.5 text-sm font-medium uppercase tracking-[0.18em] text-espresso-200 transition hover:border-gold-300 hover:bg-gold-300/10;
+  }
+
+  .btn-gold {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-gold-300 px-7 py-3.5 text-sm font-medium uppercase tracking-[0.18em] text-espresso-200 transition hover:bg-espresso-200 hover:text-cream-50;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-espresso-200/15 bg-white/70 px-4 py-3 text-sm text-ink shadow-inner placeholder:text-muted focus:border-gold-300 focus:outline-none focus:ring-2 focus:ring-gold-300/30;
+  }
+
+  .label {
+    @apply mb-2 block text-xs font-medium uppercase tracking-[0.18em] text-muted;
+  }
+
+  .card {
+    @apply rounded-2xl border border-espresso-200/10 bg-white/70 p-6 shadow-soft backdrop-blur-sm;
+  }
+
+  .section {
+    @apply py-20 sm:py-28;
+  }
+
+  .divider-leaf {
+    @apply mx-auto flex items-center justify-center gap-3 text-gold-300;
+  }
+}
+
+.dot-bg {
+  background-image: radial-gradient(rgba(34, 26, 20, 0.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.gold-text {
+  background: linear-gradient(180deg, #D9B872 0%, #C9A961 60%, #9A7C3A 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

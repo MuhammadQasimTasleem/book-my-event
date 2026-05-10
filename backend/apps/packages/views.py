@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -62,7 +62,9 @@ class PackageItemViewSet(viewsets.ModelViewSet):
 
 
 class BudgetEstimateAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    """Item-only estimates are public so guests can use Plan an event."""
+
+    permission_classes = [AllowAny]
 
     def post(self, request):
         serializer = BudgetEstimateRequestSerializer(data=request.data)
@@ -70,6 +72,11 @@ class BudgetEstimateAPIView(APIView):
         data = serializer.validated_data
 
         if data.get("package_id"):
+            if not request.user.is_authenticated:
+                return Response(
+                    {"detail": "Authentication required for package estimates."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             package = get_object_or_404(EventPackage, pk=data["package_id"])
             if package.client_id != request.user.id and request.user.role != request.user.Role.ADMIN:
                 return Response({"message": "Not allowed."}, status=403)

@@ -10,6 +10,9 @@ DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = [host for host in config("ALLOWED_HOSTS", default="").split(",") if host]
 
 INSTALLED_APPS = [
+    "jazzmin",
+    "daphne",
+    "channels",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -65,16 +68,32 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("DB_NAME", default="book_my_event"),
-        "USER": config("DB_USER", default="postgres"),
-        "PASSWORD": config("DB_PASSWORD", default="postgres"),
-        "HOST": config("DB_HOST", default="localhost"),
-        "PORT": config("DB_PORT", default="5432"),
+# Set USE_SQLITE=true in .env when PostgreSQL (DB_HOST) is unreachable — e.g. laptop off-LAN.
+USE_SQLITE = config("USE_SQLITE", default=False, cast=bool)
+if USE_SQLITE:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
+else:
+    _db_connect_timeout = config("DB_CONNECT_TIMEOUT", default=10, cast=int)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": config("DB_NAME", default="book_my_event"),
+            "USER": config("DB_USER", default="postgres"),
+            "PASSWORD": config("DB_PASSWORD", default="postgres"),
+            "HOST": config("DB_HOST", default="localhost"),
+            "PORT": config("DB_PORT", default="5432"),
+            **(
+                {"OPTIONS": {"connect_timeout": _db_connect_timeout}}
+                if _db_connect_timeout > 0
+                else {}
+            ),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = []
 
@@ -121,9 +140,113 @@ EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="no-reply@bookmyevent.com")
 ADMIN_NOTIFY_EMAIL = config("ADMIN_NOTIFY_EMAIL", default="admin@bookmyevent.com")
 
+# If False, new accounts are marked verified immediately (no verification email). Prefer True with SMTP configured.
+REQUIRE_EMAIL_VERIFICATION = config("REQUIRE_EMAIL_VERIFICATION", default=True, cast=bool)
+
 SITE_URL = config("SITE_URL", default="http://localhost:8000")
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
 
-CORS_ALLOWED_ORIGINS = [FRONTEND_URL]
+# Browser origins allowed to call the API (comma-separated). Override with CORS_ALLOWED_ORIGINS in production.
+if DEBUG:
+    _cors_default = (
+        f"{FRONTEND_URL},http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001"
+    )
+else:
+    _cors_default = FRONTEND_URL
+
+CORS_ALLOWED_ORIGINS = list(
+    dict.fromkeys(
+        origin.strip()
+        for origin in config("CORS_ALLOWED_ORIGINS", default=_cors_default).split(",")
+        if origin.strip()
+    )
+)
+# In development, allow any localhost / 127.0.0.1 port (e.g. 3002 if Next picks another).
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https?://localhost(:\d+)?$",
+        r"^https?://127\.0\.0\.1(:\d+)?$",
+    ]
+
+CORS_ALLOW_CREDENTIALS = True
+
+_redis_url = config("REDIS_URL", default="")
+if _redis_url:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [_redis_url]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
+    }
 
 PASSWORD_RESET_TIMEOUT = 60 * 30
+
+# django-jazzmin — https://django-jazzmin.readthedocs.io/
+JAZZMIN_SETTINGS = {
+    "site_title": "Book My Event Admin",
+    "site_header": "Book My Event",
+    "site_brand": "Book My Event",
+    "welcome_sign": "Sign in to manage organizers, bookings, and catalog data.",
+    "copyright": "Book My Event",
+    "show_ui_builder": False,
+    "search_model": ["users.User", "organizers.OrganizerProfile", "services.Service"],
+    "icons": {
+        "auth": "fas fa-shield-alt",
+        "auth.group": "fas fa-users",
+        "users.user": "fas fa-user",
+        "users.emailverificationtoken": "fas fa-envelope-open-text",
+        "users.passwordresettoken": "fas fa-key",
+        "organizers.organizerprofile": "fas fa-store",
+        "organizers.organizereventphoto": "fas fa-images",
+        "services.servicecategory": "fas fa-tags",
+        "services.service": "fas fa-concierge-bell",
+        "bookings.booking": "fas fa-calendar-check",
+        "packages.eventpackage": "fas fa-box-open",
+        "packages.packageitem": "fas fa-list-ul",
+        "reviews.review": "fas fa-star",
+        "notifications.notification": "fas fa-bell",
+        "payments.payment": "fas fa-credit-card",
+        "chat.message": "fas fa-comments",
+        "ai_assistant.assistantlog": "fas fa-robot",
+    },
+    "order_with_respect_to": [
+        "users",
+        "organizers",
+        "services",
+        "bookings",
+        "packages",
+        "reviews",
+        "notifications",
+        "payments",
+        "chat",
+        "ai_assistant",
+        "auth",
+    ],
+    "related_modal_active": True,
+    "changeform_format": "horizontal_tabs",
+    "changeform_format_overrides": {
+        "users.user": "collapsible",
+        "organizers.organizerprofile": "horizontal_tabs",
+        "services.service": "horizontal_tabs",
+    },
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "theme": "darkly",
+    "dark_mode_theme": None,
+    "navbar_fixed": True,
+    "footer_fixed": False,
+    "sidebar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "navbar": "navbar-dark",
+    "accent": "accent-primary",
+    "body_small_text": False,
+    "sidebar_nav_child_indent": True,
+}

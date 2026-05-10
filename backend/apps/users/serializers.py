@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from common.validators import (
+    PK_PHONE_REGEX,
     validate_email_unique,
     validate_password_strength,
     validate_phone_pk,
@@ -45,9 +46,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         name = validated_data.pop("name", "")
-        first_name = name.split(" ")[0] if name else ""
+        parts = name.split(None, 1)
+        first_name = parts[0] if parts else ""
+        last_name = parts[1] if len(parts) > 1 else ""
         user = User.objects.create_user(
             first_name=first_name,
+            last_name=last_name,
             **validated_data,
         )
         return user
@@ -67,6 +71,21 @@ class UserSerializer(serializers.ModelSerializer):
             "is_verified",
         )
         read_only_fields = ("email", "role", "is_verified")
+
+    def validate_phone_number(self, value):
+        """Allow blank; treat UI placeholder (+92…) as blank; enforce PK format when non-empty."""
+        v = (value or "").strip()
+        if not v:
+            return ""
+        if "\u2026" in v or "…" in v or v.endswith("..."):
+            return ""
+        if v in ("+92", "92", "0"):
+            return ""
+        if not PK_PHONE_REGEX.match(v):
+            raise serializers.ValidationError(
+                "Use a Pakistani mobile like +923001234567 or 03001234567, or leave blank."
+            )
+        return v
 
 
 class EmailVerificationSerializer(serializers.Serializer):
@@ -88,6 +107,52 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     def validate_new_password(self, value):
         validate_password_strength(value)
+        return value
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "phone_number",
+            "role",
+            "is_verified",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class AdminUserActiveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("is_active",)
+
+
+class AdminUserManageSerializer(serializers.ModelSerializer):
+    """Admin PATCH: account flags, role, and profile fields (not email/username here)."""
+
+    class Meta:
+        model = User
+        fields = (
+            "is_active",
+            "is_verified",
+            "role",
+            "first_name",
+            "last_name",
+            "phone_number",
+        )
+
+    def validate_role(self, value):
+        valid = {c[0] for c in User.Role.choices}
+        if value not in valid:
+            raise serializers.ValidationError("Invalid role.")
         return value
 
 
