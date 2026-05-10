@@ -1,9 +1,5 @@
-node_modules
-.next
-out
-.env
-.env.local
-*.log
-.DS_Store
-frs_content.xml
-frs_text.txt
+/node_modules
+/.next
+/out
+.vercel
+*.tsbuildinfo

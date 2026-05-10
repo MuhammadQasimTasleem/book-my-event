@@ -14,11 +14,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+
 lib64/
 parts/
 sdist/
-var/
+
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -58,8 +58,9 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
-db.sqlite3
-db.sqlite3-journal
+# Match SQLite DB in any subfolder (e.g. backend/db.sqlite3)
+**/db.sqlite3
+**/db.sqlite3-journal
 
 # Flask stuff:
 instance/
@@ -200,19 +201,20 @@ cython_debug/
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #   you could uncomment the following to ignore the entire vscode folder
 # .vscode/
-# Temporary file for partial code execution
-tempCodeRunnerFile.py
 
-# Ruff stuff:
-.ruff_cache/
+# --- Book My Event (monorepo) ---
+# Django MEDIA_ROOT / STATIC_ROOT (user uploads & collectstatic output)
+backend/media/
+backend/static/
 
-# PyPI configuration file
-.pypirc
+# Next.js / frontend build output (also listed in frontend/.gitignore; redundant is OK)
+frontend/.next/
+frontend/out/
+frontend/.vercel
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
+# TypeScript incremental
+*.tsbuildinfo
 
-# Streamlit
-.streamlit/secrets.toml
+# OS
+Thumbs.db
+.DS_Store
