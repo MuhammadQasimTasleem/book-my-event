@@ -19,6 +19,7 @@ import type { BudgetBreakdownLine, ServiceApi } from "@/lib/api/types";
 import {
   budgetEstimate,
   createBooking,
+  createClientEvent,
   createPackage,
   createPackageItem,
   deletePackageItem,
@@ -29,6 +30,7 @@ import {
 import {
   EVENT_PRESET_OPTIONS,
   resolveEventType,
+  serviceListingLabel,
   type EventPresetKey,
 } from "@/lib/service-presets";
 import { mapServiceApiToCard } from "@/lib/map-service";
@@ -38,11 +40,145 @@ import {
 } from "@/lib/event-categories";
 import { formatPKR, type Service } from "@/lib/data";
 import { isClientUser, normalizeUserMe } from "@/lib/auth-roles";
+import { useActiveClientEvent } from "@/components/active-client-event-provider";
 import { useAuth } from "@/components/providers";
+
+const PB_SNAPSHOT_KEY = "bme_pb_snapshot_v1";
+
+type PackageBuilderSnapshotV1 = {
+  v: 1;
+  selectedIds: number[];
+  selectedFamilyIds: string[];
+  selectedTypeKeys: string[];
+  packageId: number | null;
+  itemByService: Record<string, number>;
+  tier: "normal" | "moderate" | "luxury";
+  guests: number;
+  eventDate: string;
+  eventCity: string;
+  serviceSearch: string;
+  packageNotes: string;
+  eventPreset: EventPresetKey;
+  eventTypeOther: string;
+};
 
 function resolveInitialGroupId(id?: string) {
   if (id && eventCategoryGroups.some((g) => g.id === id)) return id;
   return eventCategoryGroups[0].id;
+}
+
+const ALL_FAMILY_OFFERINGS_KEY = "__all__";
+
+type OrganizerOfferTypeOption = {
+  key: string;
+  label: string;
+  kind: "all" | "taxonomy" | "custom" | "organizer_type";
+  leafSlug?: string;
+};
+
+function leafSlugSetForGroup(
+  group: (typeof eventCategoryGroups)[number]
+): Set<string> {
+  return new Set(group.items.map((i) => slugifyCategoryName(i.name)));
+}
+
+const FAMILY_MATCH_STOPWORDS = new Set([
+  "services",
+  "service",
+  "event",
+  "events",
+  "the",
+  "and",
+  "for",
+  "with",
+  "a",
+  "an",
+]);
+
+function tokenizePhrase(phrase: string): string[] {
+  return phrase
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((w) => w.trim())
+    .filter(Boolean);
+}
+
+/** Same fields organizers see on profiles — not only `category_slug`. */
+function serviceOfferKeywordHaystack(s: ServiceApi): string {
+  return [
+    s.service_type,
+    s.offering_label,
+    s.title,
+    s.description,
+    s.category_name,
+    s.category_slug,
+    s.event_type,
+    ...(s.event_types ?? []),
+    s.organizer_name,
+    s.location,
+    ...(s.included_amenities ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function groupAnchorTokens(group: (typeof eventCategoryGroups)[number]): string[] {
+  const raw = group.name
+    .toLowerCase()
+    .replace(/\b(services?|service)\b/gi, " ")
+    .trim();
+  return tokenizePhrase(raw).filter(
+    (w) => !FAMILY_MATCH_STOPWORDS.has(w) && w.length > 2
+  );
+}
+
+/**
+ * Listing belongs to the selected family: seeded category OR text overlap with
+ * family name / leaf labels (matches how organizers tag `service_type`).
+ */
+function serviceMatchesFamilyBroad(
+  s: ServiceApi,
+  group: (typeof eventCategoryGroups)[number]
+): boolean {
+  const leafSlugs = leafSlugSetForGroup(group);
+  if (s.category_slug && leafSlugs.has(s.category_slug)) return true;
+  const hay = serviceOfferKeywordHaystack(s);
+  for (const t of groupAnchorTokens(group)) {
+    if (hay.includes(t)) return true;
+  }
+  for (const item of group.items) {
+    const words = tokenizePhrase(item.name).filter(
+      (w) => !FAMILY_MATCH_STOPWORDS.has(w) && w.length > 2
+    );
+    if (words.length > 0 && words.every((w) => hay.includes(w))) return true;
+    const leafNorm = item.name.toLowerCase().replace(/\s+/g, " ").trim();
+    if (leafNorm.length > 4 && hay.includes(leafNorm)) return true;
+  }
+  return false;
+}
+
+function significantWords(label: string): string[] {
+  return tokenizePhrase(label).filter((w) => w.length > 1);
+}
+
+function matchesOfferTypeWords(tagLabel: string, s: ServiceApi): boolean {
+  const words = significantWords(tagLabel);
+  if (words.length === 0) return true;
+  const hay = serviceOfferKeywordHaystack(s);
+  return words.every((w) => hay.includes(w));
+}
+
+function serviceMatchesSelectedFamilies(
+  s: ServiceApi,
+  selectedFamilyIds: string[]
+): boolean {
+  if (selectedFamilyIds.length === 0) return true;
+  for (const id of selectedFamilyIds) {
+    const g = eventCategoryGroups.find((x) => x.id === id);
+    if (g && serviceMatchesFamilyBroad(s, g)) return true;
+  }
+  return false;
 }
 
 function unitPerGuest(s: ServiceApi): boolean {
@@ -93,22 +229,31 @@ export default function PackageBuilder({
   initialGroupId?: string;
 }) {
   const { user, loading: authLoading, ready } = useAuth();
+  const {
+    activeEvent,
+    setActiveEvent,
+    hydrated: eventCtxHydrated,
+  } = useActiveClientEvent();
   const router = useRouter();
   const [rows, setRows] = useState<ServiceApi[]>([]);
-  const [activeGroupId, setActiveGroupId] = useState(() =>
-    resolveInitialGroupId(initialGroupId)
-  );
-  const activeGroup = useMemo(
-    () =>
-      eventCategoryGroups.find((g) => g.id === activeGroupId) ??
-      eventCategoryGroups[0],
-    [activeGroupId]
-  );
-  const [activeLeafSlug, setActiveLeafSlug] = useState(() => {
+  /** Empty = all service families (no family filter). */
+  const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>(() => {
     const gid = resolveInitialGroupId(initialGroupId);
-    const g = eventCategoryGroups.find((x) => x.id === gid)!;
-    return slugifyCategoryName(g.items[0].name);
+    return [gid];
   });
+  /** Empty = all type tags (no type filter). */
+  const [selectedTypeKeys, setSelectedTypeKeys] = useState<string[]>([]);
+
+  const primaryGroup = useMemo(() => {
+    const firstId = selectedFamilyIds[0];
+    if (firstId) {
+      return (
+        eventCategoryGroups.find((g) => g.id === firstId) ??
+        eventCategoryGroups[0]
+      );
+    }
+    return eventCategoryGroups[0];
+  }, [selectedFamilyIds]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [itemByService, setItemByService] = useState<Record<number, number>>({});
   const [packageId, setPackageId] = useState<number | null>(null);
@@ -128,15 +273,64 @@ export default function PackageBuilder({
   const [eventTypeOther, setEventTypeOther] = useState("");
   const [serviceSearch, setServiceSearch] = useState("");
   const [estimateBusy, setEstimateBusy] = useState(false);
+  const [pbNewEventTitle, setPbNewEventTitle] = useState("");
+  const [pbCreatingEvent, setPbCreatingEvent] = useState(false);
 
   const resolvedEventType = resolveEventType(eventPreset, eventTypeOther);
 
   useEffect(() => {
     const gid = resolveInitialGroupId(initialGroupId);
-    setActiveGroupId(gid);
-    const g = eventCategoryGroups.find((x) => x.id === gid)!;
-    setActiveLeafSlug(slugifyCategoryName(g.items[0].name));
+    setSelectedFamilyIds([gid]);
+    setSelectedTypeKeys([]);
   }, [initialGroupId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("resume") !== "1") return;
+    const raw = sessionStorage.getItem(PB_SNAPSHOT_KEY);
+    if (!raw) {
+      window.history.replaceState(null, "", "/package-builder");
+      return;
+    }
+    try {
+      const s = JSON.parse(raw) as PackageBuilderSnapshotV1;
+      if (Array.isArray(s.selectedIds)) setSelectedIds(s.selectedIds);
+      if (Array.isArray(s.selectedFamilyIds))
+        setSelectedFamilyIds(s.selectedFamilyIds);
+      if (Array.isArray(s.selectedTypeKeys))
+        setSelectedTypeKeys(s.selectedTypeKeys);
+      if (s.packageId != null) setPackageId(s.packageId);
+      if (s.itemByService && typeof s.itemByService === "object") {
+        setItemByService(
+          Object.fromEntries(
+            Object.entries(s.itemByService).map(([k, v]) => [
+              Number(k),
+              Number(v),
+            ])
+          ) as Record<number, number>
+        );
+      }
+      if (s.tier === "normal" || s.tier === "moderate" || s.tier === "luxury")
+        setTier(s.tier);
+      if (typeof s.guests === "number") setGuests(Math.max(1, s.guests));
+      if (typeof s.eventDate === "string") setEventDate(s.eventDate);
+      if (typeof s.eventCity === "string") setEventCity(s.eventCity);
+      if (typeof s.serviceSearch === "string") setServiceSearch(s.serviceSearch);
+      if (typeof s.packageNotes === "string") setPackageNotes(s.packageNotes);
+      if (
+        s.eventPreset &&
+        EVENT_PRESET_OPTIONS.some((o) => o.key === s.eventPreset)
+      )
+        setEventPreset(s.eventPreset);
+      if (typeof s.eventTypeOther === "string")
+        setEventTypeOther(s.eventTypeOther);
+    } catch {
+      /* ignore corrupt snapshot */
+    }
+    sessionStorage.removeItem(PB_SNAPSHOT_KEY);
+    window.history.replaceState(null, "", "/package-builder");
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE}/services/?page_size=500`)
@@ -151,66 +345,221 @@ export default function PackageBuilder({
     [rows]
   );
 
-  const byCategory = useMemo(() => {
-    const m = new Map<string, ServiceApi[]>();
-    organizerOfferings.forEach((r) => {
-      const slug = r.category_slug || "other";
-      if (!m.has(slug)) m.set(slug, []);
-      m.get(slug)!.push(r);
-    });
-    return m;
-  }, [organizerOfferings]);
+  const baseOfferings = useMemo(
+    () =>
+      organizerOfferings.filter((s) =>
+        serviceMatchesSelectedFamilies(s, selectedFamilyIds)
+      ),
+    [organizerOfferings, selectedFamilyIds]
+  );
 
-  const visibleServices = useMemo(() => {
-    const list = byCategory.get(activeLeafSlug) ?? [];
-    return list.length > 0
-      ? list
-      : organizerOfferings.filter((r) => r.category_slug === activeLeafSlug);
-  }, [byCategory, activeLeafSlug, organizerOfferings]);
+  const groupsForTaxonomy = useMemo(() => {
+    if (selectedFamilyIds.length > 0) {
+      return selectedFamilyIds
+        .map((id) => eventCategoryGroups.find((g) => g.id === id))
+        .filter(Boolean) as (typeof eventCategoryGroups)[number][];
+    }
+    return eventCategoryGroups;
+  }, [selectedFamilyIds]);
+
+  const organizerOfferTypeOptions = useMemo((): OrganizerOfferTypeOption[] => {
+    const opts: OrganizerOfferTypeOption[] = [
+      {
+        key: ALL_FAMILY_OFFERINGS_KEY,
+        label: "All type tags",
+        kind: "all",
+      },
+    ];
+    if (baseOfferings.length === 0) return opts;
+
+    const stSet = new Map<string, string>();
+    for (const s of baseOfferings) {
+      const st = (s.service_type ?? "").trim();
+      if (st) stSet.set(st.toLowerCase(), st);
+    }
+    const serviceTypesSorted = [...stSet.values()].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+
+    const seenTaxSlugs = new Set<string>();
+    const taxonomyLeaves: { slug: string; label: string }[] = [];
+    for (const group of groupsForTaxonomy) {
+      for (const item of group.items) {
+        const slug = slugifyCategoryName(item.name);
+        if (seenTaxSlugs.has(slug)) continue;
+        if (baseOfferings.some((s) => s.category_slug === slug)) {
+          seenTaxSlugs.add(slug);
+          taxonomyLeaves.push({ slug, label: item.name });
+        }
+      }
+    }
+
+    const usedTaxonomyLabels = new Set(
+      taxonomyLeaves.map((t) => t.label.trim().toLowerCase())
+    );
+    const usedStLower = new Set(serviceTypesSorted.map((x) => x.toLowerCase()));
+
+    const customLabels = new Map<string, string>();
+    for (const s of baseOfferings) {
+      const ol = (s.offering_label ?? "").trim();
+      if (ol) {
+        const k = ol.toLowerCase();
+        if (!usedTaxonomyLabels.has(k) && !usedStLower.has(k))
+          customLabels.set(k, ol);
+      }
+      const title = (s.title ?? "").trim();
+      const st = (s.service_type ?? "").trim();
+      if (
+        title &&
+        title.toLowerCase() !== ol.toLowerCase() &&
+        title.toLowerCase() !== st.toLowerCase() &&
+        !usedTaxonomyLabels.has(title.toLowerCase()) &&
+        !usedStLower.has(title.toLowerCase())
+      ) {
+        customLabels.set(title.toLowerCase(), title);
+      }
+    }
+    const customSorted = [...customLabels.values()].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+
+    for (const label of serviceTypesSorted) {
+      let key = `stype:${slugifyCategoryName(label)}`;
+      let n = 0;
+      while (opts.some((o) => o.key === key)) {
+        n += 1;
+        key = `stype:${slugifyCategoryName(label)}-${n}`;
+      }
+      opts.push({
+        key,
+        label,
+        kind: "organizer_type",
+      });
+    }
+    for (const t of taxonomyLeaves.sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+    )) {
+      opts.push({
+        key: `tax:${t.slug}`,
+        label: t.label,
+        kind: "taxonomy",
+        leafSlug: t.slug,
+      });
+    }
+    const usedCustKeys = new Set<string>();
+    for (const label of customSorted) {
+      let key = `cust:${slugifyCategoryName(label)}`;
+      let n = 0;
+      while (usedCustKeys.has(key) || opts.some((o) => o.key === key)) {
+        n += 1;
+        key = `cust:${slugifyCategoryName(label)}-${n}`;
+      }
+      usedCustKeys.add(key);
+      opts.push({ key, label, kind: "custom" });
+    }
+    return opts;
+  }, [baseOfferings, groupsForTaxonomy]);
+
+  useEffect(() => {
+    const valid = new Set(organizerOfferTypeOptions.map((o) => o.key));
+    setSelectedTypeKeys((prev) => prev.filter((k) => valid.has(k)));
+  }, [organizerOfferTypeOptions]);
+
+  const selectedTypeOptions = useMemo(
+    () =>
+      organizerOfferTypeOptions.filter(
+        (o) => o.key !== ALL_FAMILY_OFFERINGS_KEY && selectedTypeKeys.includes(o.key)
+      ),
+    [organizerOfferTypeOptions, selectedTypeKeys]
+  );
+
+  const typeFilteredServices = useMemo(() => {
+    if (selectedTypeKeys.length === 0) return baseOfferings;
+    return baseOfferings.filter((s) =>
+      selectedTypeOptions.some((o) => matchesOfferTypeWords(o.label, s))
+    );
+  }, [baseOfferings, selectedTypeKeys, selectedTypeOptions]);
 
   const searchNeedle = serviceSearch.trim().toLowerCase();
 
-  const globalSearchMatches = useMemo(() => {
+  const searchMatches = useMemo(() => {
     if (!searchNeedle) return [];
     return organizerOfferings
-      .filter((s) =>
-        [
-          s.service_type,
-          s.offering_label,
-          s.description,
-          s.category_name,
-          s.location,
-          s.organizer_name,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(searchNeedle)
-      )
-      .slice(0, 48);
-  }, [organizerOfferings, searchNeedle]);
+      .filter((s) => serviceOfferKeywordHaystack(s).includes(searchNeedle))
+      .slice(0, 96);
+  }, [searchNeedle, organizerOfferings]);
+
+  const searchMatchesSelection = useMemo(() => {
+    const allowed = new Set(typeFilteredServices.map((s) => s.id));
+    return searchMatches.filter((s) => allowed.has(s.id));
+  }, [searchMatches, typeFilteredServices]);
+
+  const searchIgnoresSelection =
+    Boolean(searchNeedle) &&
+    searchMatches.length > 0 &&
+    searchMatchesSelection.length === 0 &&
+    (selectedFamilyIds.length > 0 || selectedTypeKeys.length > 0);
+
+  const selectedFamiliesLabel = useMemo(() => {
+    if (selectedFamilyIds.length === 0) return "All families";
+    return selectedFamilyIds
+      .map((id) => eventCategoryGroups.find((g) => g.id === id)?.name)
+      .filter(Boolean)
+      .join(", ");
+  }, [selectedFamilyIds]);
 
   const gridServices = useMemo(() => {
-    if (!searchNeedle) return visibleServices;
-    return globalSearchMatches;
-  }, [searchNeedle, visibleServices, globalSearchMatches]);
+    if (searchNeedle) return searchMatches;
+    return typeFilteredServices;
+  }, [searchNeedle, searchMatches, typeFilteredServices]);
 
-  const activeLeaf = useMemo(
-    () =>
-      activeGroup.items.find(
-        (i) => slugifyCategoryName(i.name) === activeLeafSlug
-      ) ?? activeGroup.items[0],
-    [activeGroup, activeLeafSlug]
-  );
+  const singleTypeForHero = useMemo(() => {
+    if (selectedTypeKeys.length !== 1) return null;
+    return organizerOfferTypeOptions.find((o) => o.key === selectedTypeKeys[0]);
+  }, [selectedTypeKeys, organizerOfferTypeOptions]);
 
-  useEffect(() => {
-    const ok = activeGroup.items.some(
-      (i) => slugifyCategoryName(i.name) === activeLeafSlug
-    );
-    if (!ok) {
-      setActiveLeafSlug(slugifyCategoryName(activeGroup.items[0].name));
+  const activeHero = useMemo(() => {
+    const group = primaryGroup;
+    if (singleTypeForHero?.kind === "taxonomy" && singleTypeForHero.leafSlug) {
+      for (const g of eventCategoryGroups) {
+        const leaf = g.items.find(
+          (i) => slugifyCategoryName(i.name) === singleTypeForHero.leafSlug
+        );
+        if (leaf) {
+          return {
+            image: leaf.image,
+            caption: leaf.description,
+            title: leaf.name,
+          };
+        }
+      }
     }
-  }, [activeGroup, activeLeafSlug]);
+    return {
+      image: group.heroImage,
+      caption: group.description,
+      title: group.name,
+    };
+  }, [primaryGroup, singleTypeForHero]);
+
+  const breakdownRowsDisplay = useMemo(() => {
+    return breakdown.map((row, i) => {
+      const sid = row.service_id ?? selectedIds[i];
+      const api = sid != null ? rows.find((r) => r.id === sid) : undefined;
+      const organizerId = row.organizer_id ?? api?.organizer;
+      const organizerCompany =
+        row.organizer_company ||
+        row.organizer_name ||
+        api?.organizer_name ||
+        "";
+      const profileHref =
+        organizerId != null
+          ? `/organizers/${organizerId}?returnTo=${encodeURIComponent(
+              "/package-builder?resume=1"
+            )}`
+          : null;
+      return { row, sid, organizerId, organizerCompany, profileHref };
+    });
+  }, [breakdown, selectedIds, rows]);
 
   const selectedApis = useMemo(
     () => rows.filter((r) => selectedIds.includes(r.id)),
@@ -431,26 +780,127 @@ export default function PackageBuilder({
       setNote("Select at least one service.");
       return;
     }
+    if (!eventCtxHydrated || !activeEvent) {
+      setNote(
+        "Name your event in step 1 so booking requests group together on your dashboard."
+      );
+      return;
+    }
     setBusy(true);
     try {
       const pid = await ensurePackage();
-      await createBooking({
-        package: pid,
-        event_date: eventDate,
-        notes:
-          packageNotes.trim() ||
-          `City: ${eventCity}. Package ${pid}. Tier: ${tier}.`,
-      });
-      setNote("Booking request submitted. View status under My Bookings.");
+      const baseNotes =
+        packageNotes.trim() ||
+        `City: ${eventCity}. Tier: ${tier}. Guests: ${guests}.`;
+      const ref = `\n[Build package #${pid} · multi-vendor]`;
+      let succeeded = 0;
+      const failedLabels: string[] = [];
+
+      for (const serviceId of selectedIds) {
+        const svc = rows.find((r) => r.id === serviceId);
+        const idx = selectedIds.indexOf(serviceId);
+        const line =
+          breakdown.find((b) => b.service_id === serviceId) ??
+          (idx >= 0 ? breakdown[idx] : undefined);
+        const lineLabel =
+          line?.title ??
+          (svc ? serviceListingLabel(svc) : `Service #${serviceId}`);
+        const organizerLabel = svc?.organizer_name ?? "Organizer";
+
+        const priceLines =
+          line && !line.unavailable && line.estimated_price != null
+            ? [
+                {
+                  label: line.title ?? lineLabel,
+                  amount: String(line.estimated_price),
+                },
+              ]
+            : undefined;
+
+        try {
+          await createBooking({
+            service: serviceId,
+            client_event: activeEvent.id,
+            event_date: eventDate,
+            event_time: null,
+            guest_count: guests,
+            event_type: resolvedEventType.trim() || undefined,
+            notes: `${baseNotes}${ref}`,
+            total_estimate:
+              line && !line.unavailable && line.estimated_price != null
+                ? line.estimated_price
+                : undefined,
+            price_breakdown: priceLines,
+          });
+          succeeded += 1;
+        } catch {
+          failedLabels.push(`${organizerLabel} (${lineLabel})`);
+        }
+      }
+
+      if (succeeded === 0) {
+        setNote(
+          "Booking requests could not be sent. Check your connection and try again."
+        );
+        return;
+      }
+      setNote(
+        failedLabels.length === 0
+          ? `Submitted ${succeeded} booking request(s) — one per selected service. Track each under My Bookings.`
+          : `Submitted ${succeeded} request(s). Some failed: ${failedLabels.join("; ")}.`
+      );
       router.push("/dashboard/client/bookings");
     } catch {
-      setNote(
-        "Booking failed. Packages must use services from a single organizer — narrow your selection or book one service at a time."
-      );
+      setNote("Something went wrong while submitting. Please try again.");
     } finally {
       setBusy(false);
     }
   };
+
+  function persistPackageBuilderSnapshot() {
+    if (typeof window === "undefined") return;
+    const payload: PackageBuilderSnapshotV1 = {
+      v: 1,
+      selectedIds,
+      selectedFamilyIds,
+      selectedTypeKeys,
+      packageId,
+      itemByService: Object.fromEntries(
+        Object.entries(itemByService).map(([k, v]) => [k, v])
+      ) as Record<string, number>,
+      tier,
+      guests,
+      eventDate,
+      eventCity,
+      serviceSearch,
+      packageNotes,
+      eventPreset,
+      eventTypeOther,
+    };
+    sessionStorage.setItem(PB_SNAPSHOT_KEY, JSON.stringify(payload));
+  }
+
+  function toggleFamily(id: string) {
+    setSelectedFamilyIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+    setSelectedTypeKeys([]);
+  }
+
+  function clearAllFamilies() {
+    setSelectedFamilyIds([]);
+    setSelectedTypeKeys([]);
+  }
+
+  function toggleTypeKey(key: string) {
+    if (key === ALL_FAMILY_OFFERINGS_KEY) {
+      setSelectedTypeKeys([]);
+      return;
+    }
+    setSelectedTypeKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  }
 
   return (
     <section className="section">
@@ -464,6 +914,64 @@ export default function PackageBuilder({
               Event type, date, and guest count drive per-guest pricing and your
               budget range.
             </p>
+            {isClientUser(user) ? (
+              <div className="mt-5 rounded-2xl border border-gold-400/30 bg-gold-50/40 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-espresso-200/75">
+                  Event title (groups your bookings)
+                </p>
+                {activeEvent ? (
+                  <p className="mt-2 text-sm text-espresso-200">
+                    Requests attach to{" "}
+                    <strong className="font-semibold">{activeEvent.title}</strong>.{" "}
+                    <Link
+                      href="/dashboard/client"
+                      className="text-xs font-medium text-gold-700 underline"
+                    >
+                      Manage on dashboard
+                    </Link>
+                  </p>
+                ) : (
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="min-w-0 grow">
+                      <label className="label text-xs">Title</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="e.g. Corporate offsite — March"
+                        value={pbNewEventTitle}
+                        onChange={(e) => setPbNewEventTitle(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={
+                        pbCreatingEvent || !pbNewEventTitle.trim()
+                      }
+                      onClick={() => {
+                        void (async () => {
+                          if (!pbNewEventTitle.trim()) return;
+                          setPbCreatingEvent(true);
+                          try {
+                            const ev = await createClientEvent({
+                              title: pbNewEventTitle.trim(),
+                            });
+                            setActiveEvent(ev.id, ev.title);
+                            setPbNewEventTitle("");
+                          } catch {
+                            setNote("Could not create event. Try again.");
+                          } finally {
+                            setPbCreatingEvent(false);
+                          }
+                        })();
+                      }}
+                      className="btn-gold shrink-0 px-4 py-2.5 text-sm disabled:opacity-45"
+                    >
+                      {pbCreatingEvent ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
             <div className="mt-5">
               <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
                 Event type
@@ -569,11 +1077,16 @@ export default function PackageBuilder({
             </h2>
             <p className="mt-1 text-sm text-muted">
               We only <strong className="font-medium text-espresso-200">show</strong>{" "}
-              services organizers already publish on the platform — nothing here
-              creates or edits their listings. Choose a category and service type,
-              then tap listings to build your plan. The budget panel shows each
-              line price, a min–max range where other organizers differ, plus
-              subtotal and total.
+              live listings. Select one or more{" "}
+              <strong className="font-medium text-espresso-200">
+                service families
+              </strong>{" "}
+              (toggle to add/remove; clear all to browse every family). Types
+              filter within that scope.{" "}
+              <strong className="font-medium text-espresso-200">Search</strong>{" "}
+              always lists matching services from the whole marketplace; if your
+              family/type picks don&apos;t overlap the search, we still show
+              matches and explain below.
             </p>
 
             <label className="relative mt-4 block">
@@ -591,28 +1104,48 @@ export default function PackageBuilder({
               />
             </label>
             {searchNeedle ? (
-              <p className="mt-2 text-xs text-muted">
-                Showing organizer offerings that match your search
-                {gridServices.length === 0
-                  ? " — no matches yet."
-                  : ` (${gridServices.length} shown).`}
-              </p>
+              <div className="mt-2 space-y-2 text-xs text-muted">
+                <p>
+                  Showing listings matching your search
+                  {gridServices.length === 0
+                    ? " — none yet."
+                    : ` (${gridServices.length} shown).`}
+                </p>
+                {searchIgnoresSelection ? (
+                  <p className="rounded-lg border border-amber-400/50 bg-amber-50/90 px-3 py-2 text-amber-950">
+                    <strong className="font-medium">Selection note:</strong> No
+                    results match <strong>both</strong> your search and your
+                    current filters ({selectedFamiliesLabel}
+                    {selectedTypeKeys.length > 0
+                      ? ` · ${selectedTypeKeys.length} type tag(s)`
+                      : ""}
+                    ). The cards below are everything that matches the search;
+                    your filters don&apos;t apply until they overlap.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-[0.18em] text-muted">
-              Service family
-            </p>
+            <div className="mt-5 flex flex-wrap items-end justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+                Service family (multi-select)
+              </p>
+              <button
+                type="button"
+                onClick={() => clearAllFamilies()}
+                className="text-xs font-medium text-gold-600 underline decoration-gold-400/60 underline-offset-2 hover:text-gold-700"
+              >
+                Clear all families
+              </button>
+            </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {eventCategoryGroups.map((g) => (
                 <button
                   key={g.id}
                   type="button"
-                  onClick={() => {
-                    setActiveGroupId(g.id);
-                    setActiveLeafSlug(slugifyCategoryName(g.items[0].name));
-                  }}
+                  onClick={() => toggleFamily(g.id)}
                   className={`rounded-full px-4 py-2 text-xs font-medium uppercase tracking-[0.18em] transition ${
-                    activeGroupId === g.id
+                    selectedFamilyIds.includes(g.id)
                       ? "bg-espresso-200 text-cream-50"
                       : "border border-espresso-200/15 bg-white text-espresso-200 hover:border-gold-300"
                   }`}
@@ -621,34 +1154,61 @@ export default function PackageBuilder({
                 </button>
               ))}
             </div>
+            {selectedFamilyIds.length === 0 ? (
+              <p className="mt-2 text-xs text-muted">
+                No family filter — showing types and listings from the full
+                catalog.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-muted">
+                Selected: <strong>{selectedFamiliesLabel}</strong>
+              </p>
+            )}
 
             <p className="mt-5 text-xs font-medium uppercase tracking-[0.18em] text-muted">
-              Service type in this family
+              Organizer service types (multi-select)
             </p>
             <div className="mt-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto rounded-xl border border-espresso-200/10 bg-cream-50/50 p-2">
-              {activeGroup.items.map((item) => {
-                const slug = slugifyCategoryName(item.name);
-                return (
-                  <button
-                    key={slug}
-                    type="button"
-                    onClick={() => setActiveLeafSlug(slug)}
-                    className={`rounded-lg px-3 py-2 text-left text-xs transition sm:text-sm ${
-                      activeLeafSlug === slug
+              {organizerOfferTypeOptions.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => toggleTypeKey(opt.key)}
+                  className={`rounded-lg px-3 py-2 text-left text-xs transition sm:text-sm ${
+                    opt.key === ALL_FAMILY_OFFERINGS_KEY
+                      ? selectedTypeKeys.length === 0
                         ? "bg-gold-300/40 font-medium text-espresso-200 ring-1 ring-gold-400/50"
                         : "bg-white text-muted hover:bg-cream-100"
-                    }`}
-                  >
-                    {item.name}
-                  </button>
-                );
-              })}
+                      : selectedTypeKeys.includes(opt.key)
+                        ? "bg-gold-300/40 font-medium text-espresso-200 ring-1 ring-gold-400/50"
+                        : "bg-white text-muted hover:bg-cream-100"
+                  }`}
+                >
+                  {opt.kind === "custom" ? (
+                    <span className="flex flex-col gap-0.5">
+                      <span>{opt.label}</span>
+                      <span className="text-[10px] font-normal uppercase tracking-wider text-muted">
+                        Unique listing
+                      </span>
+                    </span>
+                  ) : opt.kind === "organizer_type" ? (
+                    <span className="flex flex-col gap-0.5">
+                      <span>{opt.label}</span>
+                      <span className="text-[10px] font-normal uppercase tracking-wider text-muted">
+                        From organizer listings
+                      </span>
+                    </span>
+                  ) : (
+                    opt.label
+                  )}
+                </button>
+              ))}
             </div>
 
             <div className="relative mt-4 overflow-hidden rounded-2xl border border-espresso-200/10">
               <div className="relative aspect-[21/9] max-h-48 w-full sm:aspect-[3/1]">
                 <Image
-                  src={activeLeaf.image}
+                  src={activeHero.image}
                   alt=""
                   fill
                   className="object-cover"
@@ -656,29 +1216,55 @@ export default function PackageBuilder({
                 />
                 <div className="absolute inset-0 bg-gradient-to-r from-black/55 to-transparent" />
                 <p className="absolute bottom-3 left-4 right-4 text-sm font-medium text-cream-50 sm:max-w-md">
-                  {activeLeaf.description}
+                  {activeHero.caption}
                 </p>
               </div>
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              {!searchNeedle && visibleServices.length === 0 && (
+              {!searchNeedle &&
+                baseOfferings.length === 0 &&
+                organizerOfferings.length > 0 && (
                 <div className="col-span-full rounded-2xl border border-dashed border-espresso-200/20 bg-cream-50/60 p-6">
                   <p className="text-sm text-muted">
-                    No published offerings for <strong>{activeLeaf.name}</strong>{" "}
-                    yet. Try another service type,{" "}
+                    No listings match your selected families (
+                    <strong>{selectedFamiliesLabel}</strong>) yet. Clear families
+                    or add ones that fit, or{" "}
                     <Link href="/organizers" className="text-gold-500 hover:underline">
                       browse organizers
                     </Link>
-                    , or search when organizers list this category elsewhere.
+                    .
                   </p>
                 </div>
               )}
+              {!searchNeedle &&
+                baseOfferings.length > 0 &&
+                typeFilteredServices.length === 0 && (
+                  <div className="col-span-full rounded-2xl border border-dashed border-espresso-200/20 bg-cream-50/60 p-6">
+                    <p className="text-sm text-muted">
+                      No listings match your selected type tags (every word in
+                      each tag must appear on the listing). Tap{" "}
+                      <strong>All type tags</strong> to widen, or remove tags.
+                    </p>
+                  </div>
+                )}
+              {!searchNeedle &&
+                organizerOfferings.length === 0 && (
+                  <div className="col-span-full rounded-2xl border border-dashed border-espresso-200/20 bg-cream-50/60 p-6">
+                    <p className="text-sm text-muted">
+                      No published services to show yet.{" "}
+                      <Link href="/organizers" className="text-gold-500 hover:underline">
+                        Browse organizers
+                      </Link>
+                      .
+                    </p>
+                  </div>
+                )}
               {searchNeedle && gridServices.length === 0 && (
                 <div className="col-span-full rounded-2xl border border-dashed border-espresso-200/20 bg-cream-50/60 p-6">
                   <p className="text-sm text-muted">
-                    No offerings match &ldquo;{serviceSearch.trim()}
-                    &rdquo;. Try different keywords or{" "}
+                    No listings match &ldquo;{serviceSearch.trim()}&rdquo;. Try
+                    other words or{" "}
                     <Link href="/organizers" className="text-gold-500 hover:underline">
                       browse organizers
                     </Link>
@@ -769,10 +1355,11 @@ export default function PackageBuilder({
                   Cost breakdown
                 </p>
                 <ul className="mt-2 space-y-3 text-xs">
-                  {breakdown.map((row, i) => (
+                  {breakdownRowsDisplay.map(
+                    ({ row, organizerCompany, profileHref }, i) => (
                     <li
                       key={i}
-                      className={`flex flex-col gap-1 border-b border-cream-100/10 pb-3 last:border-0 ${
+                      className={`flex flex-col gap-2 border-b border-cream-100/10 pb-3 last:border-0 ${
                         row.unavailable
                           ? "rounded-lg border border-amber-400/40 bg-amber-500/15 px-2 py-2 text-amber-100"
                           : "text-cream-100/85"
@@ -784,6 +1371,14 @@ export default function PackageBuilder({
                           <span className="block font-normal text-cream-100/55">
                             Tier {row.tier} · qty {row.quantity ?? 1}
                           </span>
+                          {organizerCompany ? (
+                            <span className="mt-1 block text-[11px] font-normal text-cream-100/70">
+                              <span className="text-cream-100/50">
+                                Organizer ·{" "}
+                              </span>
+                              {organizerCompany}
+                            </span>
+                          ) : null}
                         </span>
                         <div
                           className={`shrink-0 text-right ${
@@ -804,6 +1399,15 @@ export default function PackageBuilder({
                           )}
                         </div>
                       </div>
+                      {profileHref ? (
+                        <Link
+                          href={profileHref}
+                          onClick={() => persistPackageBuilderSnapshot()}
+                          className="inline-flex w-fit items-center rounded-lg border border-cream-100/25 bg-cream-100/10 px-2.5 py-1.5 text-[11px] font-medium text-cream-50 transition hover:bg-cream-100/20"
+                        >
+                          Visit organizer profile
+                        </Link>
+                      ) : null}
                       {!row.unavailable && lineHasSpread(row) ? (
                         <p className="text-[11px] text-cream-100/65">
                           Range in category:{" "}
@@ -819,7 +1423,8 @@ export default function PackageBuilder({
                         </p>
                       ) : null}
                     </li>
-                  ))}
+                    )
+                  )}
                 </ul>
               </div>
             )}
@@ -950,9 +1555,15 @@ export default function PackageBuilder({
               onClick={() => void submit()}
             >
               {isClientUser(user)
-                ? "Submit booking request"
+                ? "Submit booking request(s)"
                 : "Sign in to book"}
             </button>
+            {isClientUser(user) ? (
+              <p className="mt-2 text-center text-[11px] leading-snug text-cream-100/65">
+                One request is sent per selected listing — mix organizers freely.
+                Each organizer receives only their line item.
+              </p>
+            ) : null}
             <p className="mt-3 text-center text-[11px] uppercase tracking-[0.18em] text-cream-100/50">
               You won&apos;t be charged yet
             </p>

@@ -40,6 +40,8 @@ export type ServiceApi = {
   price: string;
   pricing_unit: "per_event" | "per_guest";
   tier_prices: Record<string, string>;
+  tier_details?: Record<string, string>;
+  tier_images?: Record<string, string>;
   included_amenities: string[];
   event_types?: string[];
   price_min: string;
@@ -73,6 +75,8 @@ export type BookingApi = {
   client_display: string;
   organizer: number;
   organizer_display: string;
+  /** Grouped client event (multi-vendor plan); null/undefined for legacy / ungrouped requests. */
+  client_event?: number | null;
   service: number | null;
   service_title: string | null;
   package: number | null;
@@ -90,6 +94,14 @@ export type BookingApi = {
   organizer_notes?: string;
   created_at: string;
   updated_at: string;
+};
+
+export type ClientEventApi = {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  bookings: BookingApi[];
 };
 
 export type ChatUserSnapshot = {
@@ -224,4 +236,9 @@ export type BudgetBreakdownLine = {
   /** Listing not bookable or no positive rate for chosen tier — excluded from line total. */
   unavailable?: boolean;
   unavailable_reason?: "not_offered" | "no_rate";
+  /** Present for service-backed lines from `/budget/estimate/`. */
+  service_id?: number;
+  organizer_id?: number;
+  organizer_name?: string;
+  organizer_company?: string;
 };

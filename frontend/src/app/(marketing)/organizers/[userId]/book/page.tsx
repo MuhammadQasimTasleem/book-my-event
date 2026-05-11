@@ -80,7 +80,10 @@ export default function BookOrganizerPage() {
           auth: false,
         });
         setProfile(p);
-        const svc = await fetchServices({ organizer: String(organizerUserId) });
+        const svc = await fetchServices({
+          organizer: String(organizerUserId),
+          ordering: "-updated_at",
+        });
         setServices(svc.results);
       } catch {
         setLoadErr("This organizer could not be found.");

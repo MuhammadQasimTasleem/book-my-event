@@ -324,6 +324,7 @@ export async function fetchBookings(
 export async function createBooking(body: {
   service?: number;
   package?: number;
+  client_event?: number | null;
   event_date: string;
   event_time?: string | null;
   guest_count?: number;
@@ -334,6 +335,33 @@ export async function createBooking(body: {
 }) {
   return apiFetch<import("./types").BookingApi>("/bookings/", {
     method: "POST",
+    auth: true,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchClientEvents(opts?: { auth?: AuthMode }) {
+  const q = new URLSearchParams({ page_size: "100" });
+  return apiFetch<Paginated<import("./types").ClientEventApi>>(
+    `/bookings/events/?${q.toString()}`,
+    { auth: opts?.auth ?? true }
+  );
+}
+
+export async function createClientEvent(body: { title: string }) {
+  return apiFetch<import("./types").ClientEventApi>("/bookings/events/", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchClientEvent(
+  id: number,
+  body: Partial<{ title: string }>
+) {
+  return apiFetch<import("./types").ClientEventApi>(`/bookings/events/${id}/`, {
+    method: "PATCH",
     auth: true,
     body: JSON.stringify(body),
   });
@@ -403,6 +431,27 @@ export async function fetchOrganizers(
     `/organizers/?${q.toString()}`,
     { auth: opts?.auth ?? false }
   );
+}
+
+/**
+ * Public directory: load every approved organizer (follows pagination until exhausted).
+ * Backend caps `page_size` at 100 per request.
+ */
+export async function fetchAllOrganizers(opts?: { auth?: AuthMode }) {
+  const acc: import("./types").OrganizerProfileApi[] = [];
+  let page = 1;
+  const pageSize = 100;
+  for (;;) {
+    const res = await fetchOrganizers(
+      { page: String(page), page_size: String(pageSize) },
+      opts
+    );
+    acc.push(...res.results);
+    if (!res.next || res.results.length === 0) break;
+    page += 1;
+    if (page > 500) break;
+  }
+  return acc;
 }
 
 export async function fetchOrganizerProfile(
@@ -657,6 +706,31 @@ export async function deleteServiceImage(
 ) {
   return apiFetch<{ images: string[] }>(
     `/services/${serviceId}/images/${index}/`,
+    { method: "DELETE", auth: opts?.auth ?? true }
+  );
+}
+
+export async function uploadServiceTierImage(
+  serviceId: number,
+  tier: "normal" | "moderate" | "luxury",
+  image: File,
+  opts?: { auth?: AuthMode }
+) {
+  const form = new FormData();
+  form.append("image", image);
+  return apiFetch<{ url: string; tier_images: Record<string, string> }>(
+    `/services/${serviceId}/tier-images/${tier}/`,
+    { method: "POST", auth: opts?.auth ?? true, body: form }
+  );
+}
+
+export async function deleteServiceTierImage(
+  serviceId: number,
+  tier: "normal" | "moderate" | "luxury",
+  opts?: { auth?: AuthMode }
+) {
+  return apiFetch<{ tier_images: Record<string, string> }>(
+    `/services/${serviceId}/tier-images/${tier}/delete/`,
     { method: "DELETE", auth: opts?.auth ?? true }
   );
 }

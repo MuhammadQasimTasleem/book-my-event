@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter, Dancing_Script } from "next/font/google";
 import "./globals.css";
+import { ActiveClientEventProvider } from "@/components/active-client-event-provider";
+import { EventBookingCartProvider } from "@/components/event-booking-cart-provider";
+import { EventCartDock } from "@/components/event-cart-dock";
 import { AuthProvider } from "@/components/providers";
 
 const display = Playfair_Display({
@@ -38,7 +41,14 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} ${script.variable}`}
     >
       <body className="font-sans">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <ActiveClientEventProvider>
+            <EventBookingCartProvider>
+              {children}
+              <EventCartDock />
+            </EventBookingCartProvider>
+          </ActiveClientEventProvider>
+        </AuthProvider>
       </body>
     </html>
   );

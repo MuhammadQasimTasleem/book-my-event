@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { createServicesBulk, uploadServiceImage } from "@/lib/api/client";
+import { Fragment, useState, type ChangeEvent } from "react";
+import {
+  createServicesBulk,
+  uploadServiceImage,
+  uploadServiceTierImage,
+} from "@/lib/api/client";
 import { EventTypesMultiField } from "@/components/event-types-multi-field";
 import { TagBlock } from "@/components/service-offering-fields";
 import { MAX_IMAGES, ServiceImageInput } from "@/components/service-image-input";
@@ -14,6 +18,8 @@ import {
 } from "@/lib/service-presets";
 
 const MAX_SERVICE_ROWS = 40;
+const TIER_KEYS = ["normal", "moderate", "luxury"] as const;
+type TierKey = (typeof TIER_KEYS)[number];
 
 /** One table row: service type (preset + optional custom) + three tier prices (PKR per guest). */
 type PricingRow = {
@@ -23,6 +29,8 @@ type PricingRow = {
   tierSimple: string;
   tierModerate: string;
   tierLuxury: string;
+  tierDetails: Record<TierKey, string>;
+  tierImageFiles: Record<TierKey, File | null>;
 };
 
 type SharedFields = {
@@ -51,6 +59,16 @@ function newPricingRow(
     tierSimple: "",
     tierModerate: "",
     tierLuxury: "",
+    tierDetails: {
+      normal: "",
+      moderate: "",
+      luxury: "",
+    },
+    tierImageFiles: {
+      normal: null,
+      moderate: null,
+      luxury: null,
+    },
   };
 }
 
@@ -75,7 +93,13 @@ function rowIsBlank(row: PricingRow): boolean {
     !st &&
     !row.tierSimple.trim() &&
     !row.tierModerate.trim() &&
-    !row.tierLuxury.trim()
+    !row.tierLuxury.trim() &&
+    !row.tierDetails.normal.trim() &&
+    !row.tierDetails.moderate.trim() &&
+    !row.tierDetails.luxury.trim() &&
+    !row.tierImageFiles.normal &&
+    !row.tierImageFiles.moderate &&
+    !row.tierImageFiles.luxury
   );
 }
 
@@ -114,6 +138,11 @@ function rowToPayload(
     moderate: Number(row.tierModerate),
     luxury: Number(row.tierLuxury),
   };
+  const tier_details = {
+    normal: row.tierDetails.normal.trim(),
+    moderate: row.tierDetails.moderate.trim(),
+    luxury: row.tierDetails.luxury.trim(),
+  };
   const base = Math.min(tier_prices.normal, tier_prices.moderate, tier_prices.luxury);
   const event_types = buildEventTypesList(
     shared.eventPresetKeys,
@@ -128,6 +157,7 @@ function rowToPayload(
     price: base,
     pricing_unit: "per_guest",
     tier_prices,
+    tier_details,
     included_amenities: shared.amenities,
     event_types,
     location: shared.location.trim() || "Pakistan",
@@ -150,6 +180,32 @@ export function OrganizerServicesBatchEditor({ onSaved }: Props) {
 
   const setRow = (id: string, patch: Partial<PricingRow>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const setRowTierDetail = (id: string, tier: TierKey, value: string) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              tierDetails: { ...r.tierDetails, [tier]: value },
+            }
+          : r
+      )
+    );
+  };
+
+  const setRowTierImage = (id: string, tier: TierKey, file: File | null) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              tierImageFiles: { ...r.tierImageFiles, [tier]: file },
+            }
+          : r
+      )
+    );
   };
 
   const patchShared = (patch: Partial<SharedFields>) => {
@@ -202,15 +258,28 @@ export function OrganizerServicesBatchEditor({ onSaved }: Props) {
     try {
       const { results } = await createServicesBulk(payloads);
       let uploadNote = "";
-      for (const id of results.map((r) => r.id)) {
+      for (const [idx, created] of results.entries()) {
         for (const f of shared.imageFiles) {
           try {
             const buf = await f.arrayBuffer();
             const copy = new File([buf], f.name, { type: f.type });
-            await uploadServiceImage(id, copy);
+            await uploadServiceImage(created.id, copy);
           } catch {
             uploadNote =
               " Some image uploads failed — open a listing from “Your listings” to retry.";
+          }
+        }
+        const sourceRow = toSubmit[idx];
+        for (const tier of TIER_KEYS) {
+          const f = sourceRow?.tierImageFiles[tier];
+          if (!f) continue;
+          try {
+            const buf = await f.arrayBuffer();
+            const copy = new File([buf], f.name, { type: f.type });
+            await uploadServiceTierImage(created.id, tier, copy);
+          } catch {
+            uploadNote =
+              " Some tier image uploads failed — open a listing from “Your listings” to retry.";
           }
         }
       }
@@ -351,93 +420,161 @@ export function OrganizerServicesBatchEditor({ onSaved }: Props) {
             </thead>
             <tbody>
               {rows.map((row, idx) => (
-                <tr
-                  key={row.id}
-                  className="border-b border-espresso-200/[0.1] last:border-b-0 hover:bg-cream-50/50"
-                >
-                  <td className="px-4 py-3 align-middle">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <label className="sr-only" htmlFor={`svc-${row.id}`}>
-                        Service type row {idx + 1}
+                <Fragment key={row.id}>
+                  <tr
+                    className="border-b border-espresso-200/[0.1] hover:bg-cream-50/50"
+                  >
+                    <td className="px-4 py-3 align-middle">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <label className="sr-only" htmlFor={`svc-${row.id}`}>
+                          Service type row {idx + 1}
+                        </label>
+                        <select
+                          id={`svc-${row.id}`}
+                          className="input normal-case min-w-[8.5rem] shrink-0"
+                          value={row.servicePreset}
+                          onChange={(e) => {
+                            const v = e.target.value as ServicePresetKey;
+                            setRow(row.id, {
+                              servicePreset: v,
+                              serviceCustom: v === "custom" ? row.serviceCustom : "",
+                            });
+                          }}
+                        >
+                          {SERVICE_PRESET_OPTIONS.map((o) => (
+                            <option key={o.key} value={o.key}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        {row.servicePreset === "custom" ? (
+                          <input
+                            className="input normal-case min-w-[8rem] flex-1"
+                            placeholder="Service name"
+                            value={row.serviceCustom}
+                            onChange={(e) =>
+                              setRow(row.id, { serviceCustom: e.target.value })
+                            }
+                            maxLength={120}
+                            aria-label={`Custom service name row ${idx + 1}`}
+                          />
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
+                      <label className="sr-only" htmlFor={`simple-${row.id}`}>
+                        Simple PKR row {idx + 1}
                       </label>
-                      <select
-                        id={`svc-${row.id}`}
-                        className="input normal-case min-w-[8.5rem] shrink-0"
-                        value={row.servicePreset}
-                        onChange={(e) => {
-                          const v = e.target.value as ServicePresetKey;
-                          setRow(row.id, {
-                            servicePreset: v,
-                            serviceCustom: v === "custom" ? row.serviceCustom : "",
-                          });
-                        }}
-                      >
-                        {SERVICE_PRESET_OPTIONS.map((o) => (
-                          <option key={o.key} value={o.key}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                      {row.servicePreset === "custom" ? (
-                        <input
-                          className="input normal-case min-w-[8rem] flex-1"
-                          placeholder="Service name"
-                          value={row.serviceCustom}
-                          onChange={(e) =>
-                            setRow(row.id, { serviceCustom: e.target.value })
-                          }
-                          maxLength={120}
-                          aria-label={`Custom service name row ${idx + 1}`}
-                        />
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
-                    <label className="sr-only" htmlFor={`simple-${row.id}`}>
-                      Simple PKR row {idx + 1}
-                    </label>
-                    <input
-                      id={`simple-${row.id}`}
-                      className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
-                      type="number"
-                      min={0}
-                      step={1}
-                      placeholder="PKR"
-                      value={row.tierSimple}
-                      onChange={(e) => setRow(row.id, { tierSimple: e.target.value })}
-                    />
-                  </td>
-                  <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
-                    <label className="sr-only" htmlFor={`mod-${row.id}`}>
-                      Moderate PKR row {idx + 1}
-                    </label>
-                    <input
-                      id={`mod-${row.id}`}
-                      className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
-                      type="number"
-                      min={0}
-                      step={1}
-                      placeholder="PKR"
-                      value={row.tierModerate}
-                      onChange={(e) => setRow(row.id, { tierModerate: e.target.value })}
-                    />
-                  </td>
-                  <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
-                    <label className="sr-only" htmlFor={`lux-${row.id}`}>
-                      Luxury PKR row {idx + 1}
-                    </label>
-                    <input
-                      id={`lux-${row.id}`}
-                      className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
-                      type="number"
-                      min={0}
-                      step={1}
-                      placeholder="PKR"
-                      value={row.tierLuxury}
-                      onChange={(e) => setRow(row.id, { tierLuxury: e.target.value })}
-                    />
-                  </td>
-                </tr>
+                      <input
+                        id={`simple-${row.id}`}
+                        className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="PKR"
+                        value={row.tierSimple}
+                        onChange={(e) => setRow(row.id, { tierSimple: e.target.value })}
+                      />
+                    </td>
+                    <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
+                      <label className="sr-only" htmlFor={`mod-${row.id}`}>
+                        Moderate PKR row {idx + 1}
+                      </label>
+                      <input
+                        id={`mod-${row.id}`}
+                        className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="PKR"
+                        value={row.tierModerate}
+                        onChange={(e) => setRow(row.id, { tierModerate: e.target.value })}
+                      />
+                    </td>
+                    <td className="border-l border-espresso-200/10 px-4 py-3 align-middle">
+                      <label className="sr-only" htmlFor={`lux-${row.id}`}>
+                        Luxury PKR row {idx + 1}
+                      </label>
+                      <input
+                        id={`lux-${row.id}`}
+                        className="input normal-case w-full min-w-0 focus:border-gold-400 focus:ring-2 focus:ring-gold-400/30"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="PKR"
+                        value={row.tierLuxury}
+                        onChange={(e) => setRow(row.id, { tierLuxury: e.target.value })}
+                      />
+                    </td>
+                  </tr>
+                  <tr
+                    className="border-b border-espresso-200/[0.1] bg-cream-50/20 last:border-b-0"
+                  >
+                    <td className="px-4 py-3 align-top">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+                        Row {idx + 1} tier details
+                      </p>
+                      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                        Add what clients get in each tier, plus one image per tier.
+                      </p>
+                    </td>
+                    {TIER_KEYS.map((tierKey) => {
+                      const label =
+                        tierKey === "normal"
+                          ? "Simple"
+                          : tierKey === "moderate"
+                            ? "Moderate"
+                            : "Luxury";
+                      const file = row.tierImageFiles[tierKey];
+                      return (
+                        <td
+                          key={`${row.id}-${tierKey}-cell`}
+                          className="border-l border-espresso-200/10 px-4 py-3 align-top"
+                        >
+                          <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+                            {label} details
+                            <textarea
+                              className="input min-h-[88px] py-2 normal-case text-sm"
+                              value={row.tierDetails[tierKey]}
+                              onChange={(e) =>
+                                setRowTierDetail(row.id, tierKey, e.target.value)
+                              }
+                              placeholder={`What is included in ${label.toLowerCase()}?`}
+                              maxLength={2000}
+                            />
+                          </label>
+                          <label className="mt-3 flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+                            {label} image
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              className="input cursor-pointer py-2 normal-case text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-cream-100 file:px-2 file:py-1 file:text-xs file:text-espresso-200"
+                              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                setRowTierImage(
+                                  row.id,
+                                  tierKey,
+                                  e.target.files?.[0] ?? null
+                                )
+                              }
+                            />
+                          </label>
+                          {file ? (
+                            <div className="mt-2 flex items-center gap-2 text-[11px] text-espresso-200">
+                              <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                              <button
+                                type="button"
+                                className="text-rose-700 hover:underline"
+                                onClick={() => setRowTierImage(row.id, tierKey, null)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -6,9 +6,11 @@ import { useEffect, useState } from "react";
 import {
   deleteService,
   deleteServiceImage,
+  deleteServiceTierImage,
   fetchService,
   patchService,
   uploadServiceImage,
+  uploadServiceTierImage,
 } from "@/lib/api/client";
 import type { ServiceApi } from "@/lib/api/types";
 import { EventTypesMultiField } from "@/components/event-types-multi-field";
@@ -25,6 +27,14 @@ import {
   resolveServiceType,
 } from "@/lib/service-presets";
 
+const TIER_ROWS = [
+  { key: "normal", label: "Simple", accent: "border-espresso-200/20 bg-cream-50/70" },
+  { key: "moderate", label: "Moderate", accent: "border-gold-400/25 bg-gold-50/50" },
+  { key: "luxury", label: "Luxury", accent: "border-amber-400/30 bg-amber-50/50" },
+] as const;
+
+type TierKey = (typeof TIER_ROWS)[number]["key"];
+
 export default function OrganizerServiceEditPage() {
   const params = useParams();
   const id = Number(params.id);
@@ -39,6 +49,16 @@ export default function OrganizerServiceEditPage() {
   const [tierSimple, setTierSimple] = useState("");
   const [tierModerate, setTierModerate] = useState("");
   const [tierLuxury, setTierLuxury] = useState("");
+  const [tierDetails, setTierDetails] = useState<Record<TierKey, string>>({
+    normal: "",
+    moderate: "",
+    luxury: "",
+  });
+  const [tierImageFiles, setTierImageFiles] = useState<Record<TierKey, File | null>>({
+    normal: null,
+    moderate: null,
+    luxury: null,
+  });
   const [amenities, setAmenities] = useState<string[]>([]);
   const [location, setLocation] = useState("");
   const [availability, setAvailability] = useState(true);
@@ -78,6 +98,13 @@ export default function OrganizerServiceEditPage() {
         setTierSimple(tp.normal != null ? String(tp.normal) : "");
         setTierModerate(tp.moderate != null ? String(tp.moderate) : "");
         setTierLuxury(tp.luxury != null ? String(tp.luxury) : "");
+        const td = s.tier_details ?? {};
+        setTierDetails({
+          normal: String(td.normal ?? ""),
+          moderate: String(td.moderate ?? ""),
+          luxury: String(td.luxury ?? ""),
+        });
+        setTierImageFiles({ normal: null, moderate: null, luxury: null });
         setAmenities(
           Array.isArray(s.included_amenities) ? [...s.included_amenities] : []
         );
@@ -92,6 +119,12 @@ export default function OrganizerServiceEditPage() {
     normal: Number(tierSimple),
     moderate: Number(tierModerate),
     luxury: Number(tierLuxury),
+  });
+
+  const buildTierDetails = (): Record<string, string> => ({
+    normal: tierDetails.normal.trim(),
+    moderate: tierDetails.moderate.trim(),
+    luxury: tierDetails.luxury.trim(),
   });
 
   const save = async () => {
@@ -127,6 +160,7 @@ export default function OrganizerServiceEditPage() {
     setSaving(true);
     try {
       const tier_prices = buildTierPrices();
+      const tier_details = buildTierDetails();
       const base = Math.min(tier_prices.normal, tier_prices.moderate, tier_prices.luxury);
       let uploadNote = "";
       const s = await patchService(id, {
@@ -137,6 +171,7 @@ export default function OrganizerServiceEditPage() {
         price: base,
         pricing_unit: "per_guest",
         tier_prices,
+        tier_details,
         included_amenities: amenities,
         event_types: eventTypes,
         location: location.trim() || "Pakistan",
@@ -153,18 +188,41 @@ export default function OrganizerServiceEditPage() {
             " Saved; one or more new uploads failed — try again or remove images to stay under the limit.";
         }
       }
+      for (const tierKey of TIER_ROWS.map((x) => x.key)) {
+        const file = tierImageFiles[tierKey];
+        if (!file) continue;
+        try {
+          await uploadServiceTierImage(s.id, tierKey, file);
+        } catch {
+          uploadNote =
+            " Saved; one or more tier image uploads failed — try again on that tier.";
+        }
+      }
       setRow(s);
       setAmenities(
         Array.isArray(s.included_amenities) ? [...s.included_amenities] : []
       );
       setImageFiles([]);
+      setTierImageFiles({ normal: null, moderate: null, luxury: null });
       if (uploadNote) {
         const refreshed = await fetchService(id, { auth: true });
         setRow(refreshed);
+        const td = refreshed.tier_details ?? {};
+        setTierDetails({
+          normal: String(td.normal ?? ""),
+          moderate: String(td.moderate ?? ""),
+          luxury: String(td.luxury ?? ""),
+        });
         setMsg(`Saved.${uploadNote}`);
       } else {
         const refreshed = await fetchService(id, { auth: true });
         setRow(refreshed);
+        const td = refreshed.tier_details ?? {};
+        setTierDetails({
+          normal: String(td.normal ?? ""),
+          moderate: String(td.moderate ?? ""),
+          luxury: String(td.luxury ?? ""),
+        });
         setMsg("Saved.");
       }
     } catch {
@@ -315,6 +373,120 @@ export default function OrganizerServiceEditPage() {
                   onChange={(e) => setTierLuxury(e.target.value)}
                 />
               </label>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-espresso-200">
+              Tier details for clients
+            </p>
+            <p className="text-sm text-muted">
+              Add short differences for each tier and one image per tier. These are
+              shown on your public listing when the client clicks Simple, Moderate,
+              or Luxury.
+            </p>
+            <div className="grid gap-4">
+              {TIER_ROWS.map((tierRow) => {
+                const currentTierImage = row.tier_images?.[tierRow.key] ?? "";
+                const pendingTierFile = tierImageFiles[tierRow.key];
+                return (
+                  <div
+                    key={tierRow.key}
+                    className={`rounded-xl border p-4 ${tierRow.accent}`}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-espresso-200">
+                      {tierRow.label}
+                    </p>
+                    <textarea
+                      className="input mt-3 min-h-[92px] py-3 normal-case"
+                      value={tierDetails[tierRow.key]}
+                      onChange={(e) =>
+                        setTierDetails((prev) => ({
+                          ...prev,
+                          [tierRow.key]: e.target.value,
+                        }))
+                      }
+                      placeholder={`Describe what is included in ${tierRow.label.toLowerCase()} for clients.`}
+                      maxLength={2000}
+                    />
+                    <div className="mt-3 space-y-3">
+                      {currentTierImage ? (
+                        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-espresso-200/15 bg-white/80 px-3 py-3">
+                          <img
+                            src={currentTierImage}
+                            alt={`${tierRow.label} tier`}
+                            className="h-16 w-16 rounded-lg object-cover"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs text-espresso-200">
+                              Current {tierRow.label.toLowerCase()} image
+                            </p>
+                            <p className="truncate text-[11px] text-muted">
+                              {currentTierImage}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            className="text-xs font-medium text-rose-700 hover:underline"
+                            onClick={() =>
+                              void (async () => {
+                                setErr(null);
+                                setMsg(null);
+                                try {
+                                  const { tier_images } = await deleteServiceTierImage(
+                                    id,
+                                    tierRow.key
+                                  );
+                                  setRow((prev) =>
+                                    prev ? { ...prev, tier_images } : prev
+                                  );
+                                  setMsg(`${tierRow.label} image removed.`);
+                                } catch {
+                                  setErr(`Could not remove ${tierRow.label.toLowerCase()} image.`);
+                                }
+                              })()
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
+                      <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-muted">
+                        Upload {tierRow.label.toLowerCase()} image
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="input cursor-pointer py-2 normal-case file:mr-3 file:rounded-lg file:border-0 file:bg-cream-100 file:px-3 file:py-1.5 file:text-sm file:text-espresso-200"
+                          onChange={(e) =>
+                            setTierImageFiles((prev) => ({
+                              ...prev,
+                              [tierRow.key]: e.target.files?.[0] ?? null,
+                            }))
+                          }
+                        />
+                      </label>
+                      {pendingTierFile ? (
+                        <div className="flex items-center gap-2 text-xs text-espresso-200">
+                          <span className="truncate">{pendingTierFile.name}</span>
+                          <button
+                            type="button"
+                            className="text-rose-700 hover:underline"
+                            onClick={() =>
+                              setTierImageFiles((prev) => ({
+                                ...prev,
+                                [tierRow.key]: null,
+                              }))
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

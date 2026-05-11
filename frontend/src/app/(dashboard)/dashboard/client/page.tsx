@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  ArrowRight,
   CalendarDays,
   CheckCircle2,
   MessageCircle,
@@ -16,24 +15,29 @@ import StatCard from "@/components/stat-card";
 import { formatPKR } from "@/lib/data";
 import {
   clientDashboard,
-  fetchBookings,
+  createClientEvent,
+  fetchClientEvents,
   fetchNotifications,
   fetchServices,
 } from "@/lib/api/client";
+import type { ClientEventApi } from "@/lib/api/types";
+import { useActiveClientEvent } from "@/components/active-client-event-provider";
+import { ClientEventPlanCard } from "@/components/client-event-plan-card";
 import { mapServiceApiToCard } from "@/lib/map-service";
 import { useAuth } from "@/components/providers";
 
 export default function ClientDashboard() {
   const { user, loading: authLoading } = useAuth();
+  const { setActiveEvent } = useActiveClientEvent();
   const router = useRouter();
   const [stats, setStats] = useState<{
     total_bookings: number;
     pending_bookings: number;
     completed_bookings: number;
   } | null>(null);
-  const [bookings, setBookings] = useState<
-    Awaited<ReturnType<typeof fetchBookings>>["results"]
-  >([]);
+  const [events, setEvents] = useState<ClientEventApi[]>([]);
+  const [newEventTitle, setNewEventTitle] = useState("");
+  const [creatingEvent, setCreatingEvent] = useState(false);
   const [notifications, setNotifications] = useState<
     Awaited<ReturnType<typeof fetchNotifications>>["results"]
   >([]);
@@ -53,14 +57,14 @@ export default function ClientDashboard() {
     }
     (async () => {
       try {
-        const [dash, book, notif, svc] = await Promise.all([
+        const [dash, ev, notif, svc] = await Promise.all([
           clientDashboard(),
-          fetchBookings(),
+          fetchClientEvents(),
           fetchNotifications(),
           fetchServices({}),
         ]);
         setStats(dash);
-        setBookings(book.results.slice(0, 5));
+        setEvents(ev.results.slice(0, 4));
         setNotifications(notif.results.slice(0, 6));
         setSuggestions(svc.results.slice(0, 4).map(mapServiceApiToCard));
       } catch {
@@ -84,9 +88,60 @@ export default function ClientDashboard() {
             Hello, {displayName}
           </h1>
         </div>
-        <Link href="/package-builder" className="btn-primary">
-          <Sparkles size={16} /> Plan a new event
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/package-builder" className="btn-primary">
+            <Sparkles size={16} /> Build package
+          </Link>
+          <Link
+            href="/organizers"
+            className="btn-ghost border border-espresso-200/15 px-4 py-2"
+          >
+            Browse organizers
+          </Link>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gold-400/25 bg-gold-50/40 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-espresso-200/80">
+          Quick: new event title
+        </p>
+        <p className="mt-1 text-sm text-muted">
+          Sets the active plan for cart checkout, package builder, and direct requests.
+        </p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+          <input
+            type="text"
+            className="input min-w-0 grow"
+            placeholder="e.g. Sana’s mehndi weekend"
+            value={newEventTitle}
+            onChange={(e) => setNewEventTitle(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={creatingEvent || !newEventTitle.trim()}
+            onClick={() => {
+              void (async () => {
+                if (!newEventTitle.trim()) return;
+                setCreatingEvent(true);
+                try {
+                  const ev = await createClientEvent({
+                    title: newEventTitle.trim(),
+                  });
+                  setActiveEvent(ev.id, ev.title);
+                  setEvents((prev) => [ev, ...prev].slice(0, 4));
+                  setNewEventTitle("");
+                } catch {
+                  /* toast-free */
+                } finally {
+                  setCreatingEvent(false);
+                }
+              })();
+            }}
+            className="btn-gold shrink-0 px-4 py-2.5 text-sm disabled:opacity-45"
+          >
+            {creatingEvent ? "Saving…" : "Create"}
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -113,7 +168,7 @@ export default function ClientDashboard() {
 
       <section className="rounded-3xl border border-espresso-200/10 bg-white shadow-soft">
         <div className="flex items-center justify-between p-6">
-          <h2 className="font-serif text-2xl text-espresso-200">My bookings</h2>
+          <h2 className="font-serif text-2xl text-espresso-200">My events</h2>
           <Link
             href="/dashboard/client/bookings"
             className="text-xs uppercase tracking-[0.18em] text-gold-400"
@@ -121,52 +176,15 @@ export default function ClientDashboard() {
             View all →
           </Link>
         </div>
-        <div className="divide-y divide-espresso-200/10">
-          {bookings.length === 0 ? (
-            <p className="px-6 py-8 text-sm text-muted">No bookings yet.</p>
+        <div className="space-y-6 px-6 pb-6">
+          {events.length === 0 ? (
+            <p className="py-4 text-sm text-muted">
+              No event plans yet. Create a title above, then add services from the
+              marketplace.
+            </p>
           ) : (
-            bookings.map((b) => (
-              <div
-                key={b.id}
-                className="grid gap-3 px-6 py-5 sm:grid-cols-[1fr_auto] sm:items-center"
-              >
-                <div>
-                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted">
-                    <span>#{b.id}</span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <CalendarDays size={11} className="text-gold-400" />
-                      {b.event_date}
-                    </span>
-                  </div>
-                  <p className="mt-1 font-serif text-lg text-espresso-200">
-                    {b.service_title || b.package_name || "Booking"}
-                  </p>
-                  <p className="text-xs text-muted">{b.notes || "—"}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] ${
-                      b.booking_status === "accepted"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : b.booking_status === "pending"
-                          ? "bg-amber-50 text-amber-700"
-                          : b.booking_status === "rejected"
-                            ? "bg-rose-50 text-rose-700"
-                            : "bg-cream-100 text-muted"
-                    }`}
-                  >
-                    {b.booking_status}
-                  </span>
-                  <button
-                    type="button"
-                    className="grid h-9 w-9 place-items-center rounded-full border border-espresso-200/15 text-espresso-200 hover:bg-cream-100"
-                    aria-label="Open"
-                  >
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-              </div>
+            events.map((ev) => (
+              <ClientEventPlanCard key={ev.id} event={ev} compact />
             ))
           )}
         </div>

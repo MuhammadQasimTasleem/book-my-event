@@ -4,7 +4,6 @@ import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import clsx from "clsx";
 import { useAuth } from "@/components/providers";
-import { isClientUser } from "@/lib/auth-roles";
 
 type Props = {
   organizerUserId: number;
@@ -13,10 +12,6 @@ type Props = {
   compact?: boolean;
 };
 
-/**
- * Lets a signed-in **client** open a thread with this organizer.
- * Organizers reach clients from the dashboard inbox; public cards stay client-initiated.
- */
 export function OrganizerChatButton({
   organizerUserId,
   className,
@@ -40,7 +35,6 @@ export function OrganizerChatButton({
     );
   }
   if (user.id === organizerUserId) return null;
-  if (!isClientUser(user)) return null;
   return (
     <Link href={`/chat/${organizerUserId}`} className={clsx(base, className)} prefetch={false}>
       <MessageCircle className="h-4 w-4 shrink-0" aria-hidden />
