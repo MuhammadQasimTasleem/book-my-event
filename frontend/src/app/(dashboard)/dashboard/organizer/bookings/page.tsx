@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { CalendarDays, Check, X } from "lucide-react";
+import { CalendarDays, Check, MessageCircle, X } from "lucide-react";
 import { BookingDetailGrid } from "@/components/booking-detail-grid";
 import {
   bookingAccept,
@@ -93,6 +93,13 @@ function BookingDetailPanel({
 }) {
   return (
     <div className="mt-3 space-y-4 rounded-xl border border-espresso-200/12 bg-cream-50/50 p-4 text-sm">
+      <Link
+        href={`/chat/${r.client}`}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-gold-600 hover:underline"
+      >
+        <MessageCircle size={14} aria-hidden />
+        Chat with client
+      </Link>
       <BookingDetailGrid booking={r} hideOrganizerNotes />
       <div>
         <label className="text-[10px] uppercase tracking-[0.18em] text-muted">

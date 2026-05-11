@@ -767,3 +767,62 @@ export async function deleteOrganizerEventPhoto(id: number) {
     auth: true,
   });
 }
+
+export async function fetchChatMessages(params?: {
+  withUserId?: number;
+  pageSize?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params?.withUserId != null) q.set("with", String(params.withUserId));
+  q.set("page_size", String(params?.pageSize ?? 200));
+  const qs = q.toString();
+  const data = await apiFetch<
+    Paginated<import("./types").MessageApi> | import("./types").MessageApi[]
+  >(`/chat/?${qs}`, {
+    auth: true,
+  });
+  if (Array.isArray(data)) {
+    return {
+      count: data.length,
+      next: null,
+      previous: null,
+      results: data,
+    } satisfies Paginated<import("./types").MessageApi>;
+  }
+  return data;
+}
+
+export async function createChatMessage(body: {
+  receiver: number;
+  content?: string;
+  image?: File | null;
+}) {
+  if (body.image) {
+    const form = new FormData();
+    form.append("receiver", String(body.receiver));
+    const c = (body.content ?? "").trim();
+    if (c) form.append("content", c);
+    form.append("image", body.image);
+    return apiFetch<import("./types").MessageApi>("/chat/", {
+      method: "POST",
+      auth: true,
+      body: form,
+    });
+  }
+  return apiFetch<import("./types").MessageApi>("/chat/", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({
+      receiver: body.receiver,
+      content: (body.content ?? "").trim(),
+    }),
+  });
+}
+
+export async function markChatMessagesRead(partnerUserId: number) {
+  return apiFetch<{ marked: number }>("/chat/mark-read/", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ partner: partnerUserId }),
+  });
+}

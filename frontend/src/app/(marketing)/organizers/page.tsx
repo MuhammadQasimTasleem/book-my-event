@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, Sparkles } from "lucide-react";
+import { OrganizerChatButton } from "@/components/organizer-chat-button";
 import PageHero from "@/components/page-hero";
 import { fetchOrganizers } from "@/lib/api/client";
 import type { OrganizerProfileApi } from "@/lib/api/types";
@@ -192,10 +193,10 @@ export default function OrganizersDirectoryPage() {
                         </div>
                       ) : null}
 
-                      <div className="mt-auto pt-2">
+                      <div className="mt-auto flex flex-col gap-2 pt-2 sm:flex-row sm:items-stretch">
                         <Link
                           href={href}
-                          className="btn-gold flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-sm font-semibold shadow-sm transition hover:gap-3"
+                          className="btn-gold flex flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-sm font-semibold shadow-sm transition hover:gap-3"
                         >
                           View profile
                           <ArrowRight
@@ -203,6 +204,11 @@ export default function OrganizersDirectoryPage() {
                             aria-hidden
                           />
                         </Link>
+                        <OrganizerChatButton
+                          organizerUserId={o.user}
+                          compact
+                          className="flex-1 py-3.5"
+                        />
                       </div>
                     </div>
                   </article>

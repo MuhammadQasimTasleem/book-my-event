@@ -13,6 +13,7 @@ import {
   LogOut,
   ChevronDown,
   Bell,
+  MessageCircle,
   User,
 } from "lucide-react";
 import clsx from "clsx";
@@ -146,6 +147,8 @@ function ProfileMenu() {
 
   const dash = dashboardPath(user.role);
   const profileHref = `${dash}/profile`;
+  const messagesHref =
+    user.role === "organizer" ? "/dashboard/organizer/messages" : "/dashboard/client/messages";
 
   return (
     <div className="relative flex items-center gap-2" ref={ref}>
@@ -169,6 +172,13 @@ function ProfileMenu() {
           >
             <LayoutDashboard size={14} className="text-gold-400" />{" "}
             {dashboardNavLabel(user.role)}
+          </Link>
+          <Link
+            href={messagesHref}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm text-espresso-200 hover:bg-cream-100"
+            onClick={() => setOpen(false)}
+          >
+            <MessageCircle size={14} className="text-gold-400" /> Messages
           </Link>
           <Link
             href={profileHref}
@@ -415,6 +425,17 @@ export default function SiteHeader() {
                     onClick={() => setOpen(false)}
                   >
                     {dashboardNavLabel(user.role)}
+                  </Link>
+                  <Link
+                    href={
+                      user.role === "organizer"
+                        ? "/dashboard/organizer/messages"
+                        : "/dashboard/client/messages"
+                    }
+                    className="btn-ghost"
+                    onClick={() => setOpen(false)}
+                  >
+                    Messages
                   </Link>
                   <Link
                     href={`${dashboardPath(user.role)}/profile`}

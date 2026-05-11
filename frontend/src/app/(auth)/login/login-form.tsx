@@ -70,11 +70,11 @@ export default function LoginForm() {
       }
 
       if (me.role === "organizer") {
-        router.push(
-          next && next.startsWith("/") && next.startsWith("/dashboard")
-            ? next
-            : "/dashboard/organizer"
-        );
+        const okNext =
+          next &&
+          next.startsWith("/") &&
+          (next.startsWith("/dashboard") || next.startsWith("/chat/"));
+        router.push(okNext ? next : "/dashboard/organizer");
       } else {
         if (next && next.startsWith("/")) {
           router.push(next);

@@ -92,11 +92,24 @@ export type BookingApi = {
   updated_at: string;
 };
 
+export type ChatUserSnapshot = {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: UserRole;
+  display_name: string;
+};
+
 export type MessageApi = {
   id: number;
   sender: number;
   receiver: number;
+  sender_detail?: ChatUserSnapshot;
+  receiver_detail?: ChatUserSnapshot;
   content: string;
+  /** Absolute or relative image URL from API */
+  image?: string | null;
   is_read: boolean;
   created_at: string;
 };

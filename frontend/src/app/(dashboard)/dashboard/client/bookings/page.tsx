@@ -126,7 +126,7 @@ export default function BookingsPage() {
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-espresso-200/10 pt-4">
                 <Link
-                  href="/dashboard/client/messages"
+                  href={`/chat/${b.organizer}`}
                   className="inline-flex items-center gap-1 text-xs uppercase tracking-[0.18em] text-gold-400 hover:underline"
                 >
                   <MessageCircle size={12} /> Message organizer

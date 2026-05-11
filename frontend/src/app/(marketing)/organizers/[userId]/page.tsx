@@ -13,6 +13,7 @@ import type { OrganizerProfileApi, ServiceApi } from "@/lib/api/types";
 import { API_ORIGIN } from "@/lib/config";
 import { formatPKR } from "@/lib/data";
 import { mapServiceApiToCard } from "@/lib/map-service";
+import { OrganizerChatButton } from "@/components/organizer-chat-button";
 import { serviceListingLabel } from "@/lib/service-presets";
 
 function absUrl(path: string | null | undefined): string | null {
@@ -146,6 +147,7 @@ export default function OrganizerPublicProfilePage() {
           <Link href={`/organizers/${userId}/book`} className="btn-primary">
             Book an event
           </Link>
+          <OrganizerChatButton organizerUserId={userId} />
           <Link
             href="/package-builder"
             className="btn-ghost border border-espresso-200/20"

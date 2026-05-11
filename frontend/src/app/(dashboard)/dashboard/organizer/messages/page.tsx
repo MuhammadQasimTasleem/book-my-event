@@ -1,14 +1,5 @@
-import { Suspense } from "react";
-import MessagesContent from "../../client/messages/messages-content";
+import MessagesInbox from "@/components/messages-inbox";
 
 export default function OrganizerMessagesPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="py-20 text-center text-sm text-muted">Loading…</div>
-      }
-    >
-      <MessagesContent />
-    </Suspense>
-  );
+  return <MessagesInbox />;
 }
