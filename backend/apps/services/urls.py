@@ -6,6 +6,8 @@ from .views import (
     ServiceCategoryViewSet,
     ServiceImageDestroyView,
     ServiceImageUploadView,
+    ServiceTierImageDestroyView,
+    ServiceTierImageUploadView,
     ServiceViewSet,
 )
 
@@ -17,5 +19,10 @@ urlpatterns = [
     path("bulk/", ServiceBulkCreateAPIView.as_view(), name="service-bulk-create"),
     path("<int:pk>/images/<int:index>/", ServiceImageDestroyView.as_view()),
     path("<int:pk>/images/", ServiceImageUploadView.as_view()),
+    path("<int:pk>/tier-images/<str:tier>/", ServiceTierImageUploadView.as_view()),
+    path(
+        "<int:pk>/tier-images/<str:tier>/delete/",
+        ServiceTierImageDestroyView.as_view(),
+    ),
     path("", include(router.urls)),
 ]

@@ -27,14 +27,43 @@ def _build_suggestion(items_breakdown: list[dict]) -> list[str]:
     return suggestions
 
 
+def _organizer_labels(service: Service) -> tuple[int, str, str]:
+    org = service.organizer
+    oid = org.pk
+    person = (f"{org.first_name} {org.last_name}".strip()) or org.username or org.email or ""
+    company = person
+    prof = getattr(org, "organizer_profile", None)
+    if prof is not None:
+        cn = (prof.company_name or "").strip()
+        if cn:
+            company = cn
+    return oid, person, company
+
+
 def estimate_items(items: Iterable[dict]) -> dict:
+    items_list = list(items)
+    service_ids = [
+        item["service"].pk for item in items_list if item.get("service") is not None
+    ]
+    enriched_by_id: dict[int, Service] = {}
+    if service_ids:
+        enriched_by_id = {
+            s.id: s
+            for s in Service.objects.filter(pk__in=service_ids).select_related(
+                "organizer",
+                "organizer__organizer_profile",
+                "category",
+            )
+        }
+
     breakdown = []
     total = 0.0
     min_total = 0.0
     max_total = 0.0
 
-    for item in items:
-        service = item.get("service")
+    for item in items_list:
+        raw_svc = item.get("service")
+        service = enriched_by_id.get(raw_svc.pk, raw_svc) if raw_svc else None
         category = item.get("category")
         tier = item.get("tier")
         quantity = int(item.get("quantity", 1))
@@ -102,6 +131,12 @@ def estimate_items(items: Iterable[dict]) -> dict:
             "max_price": round(max_price, 2),
             "unavailable": line_unavailable if service else False,
         }
+        if service:
+            oid, oname, ocompany = _organizer_labels(service)
+            row["service_id"] = service.pk
+            row["organizer_id"] = oid
+            row["organizer_name"] = oname
+            row["organizer_company"] = ocompany
         if service and line_unavailable:
             row["unavailable_reason"] = unavailable_reason
         breakdown.append(row)

@@ -57,6 +57,8 @@ class Service(BaseModel):
         default="per_guest",
     )
     tier_prices = models.JSONField(default=dict, blank=True)
+    tier_details = models.JSONField(default=dict, blank=True)
+    tier_images = models.JSONField(default=dict, blank=True)
     included_amenities = models.JSONField(default=list, blank=True)
     event_types = models.JSONField(default=list, blank=True)
     location = models.CharField(max_length=120)

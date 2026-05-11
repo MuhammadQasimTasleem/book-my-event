@@ -123,7 +123,7 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
             rows = list(
                 Service.objects.filter(organizer_id=obj.user_id)
                 .select_related("category")
-                .order_by("id")[:4]
+                .order_by("-updated_at", "-id")[:4]
             )
         return [s.listing_title() for s in rows]
 

@@ -15,6 +15,7 @@ MAX_AMENITY_LEN = 64
 MAX_EVENT_TYPES = 20
 MAX_EVENT_TYPE_LEN = 64
 MAX_OFFERING_LABEL_LEN = 120
+MAX_TIER_DETAIL_LEN = 2000
 
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -58,6 +59,8 @@ class ServiceSerializer(serializers.ModelSerializer):
             "price",
             "pricing_unit",
             "tier_prices",
+            "tier_details",
+            "tier_images",
             "included_amenities",
             "event_types",
             "price_min",
@@ -141,6 +144,42 @@ class ServiceSerializer(serializers.ModelSerializer):
                 )
             cleaned.append(s)
         return cleaned
+
+    def validate_tier_details(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("tier_details must be an object.")
+        out = {}
+        allowed = set(TIER_KEYS)
+        for key, raw in value.items():
+            if key not in allowed:
+                raise serializers.ValidationError(
+                    f"Invalid tier_details key: {key!r}. Allowed: {', '.join(allowed)}."
+                )
+            s = str(raw or "").strip()
+            if len(s) > MAX_TIER_DETAIL_LEN:
+                raise serializers.ValidationError(
+                    f"Details for {key!r} must be at most {MAX_TIER_DETAIL_LEN} characters."
+                )
+            out[key] = s
+        return out
+
+    def validate_tier_images(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("tier_images must be an object.")
+        out = {}
+        allowed = set(TIER_KEYS)
+        for key, raw in value.items():
+            if key not in allowed:
+                raise serializers.ValidationError(
+                    f"Invalid tier_images key: {key!r}. Allowed: {', '.join(allowed)}."
+                )
+            s = str(raw or "").strip()
+            out[key] = s
+        return out
 
     def validate_offering_label(self, value):
         if value is None:

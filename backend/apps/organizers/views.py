@@ -56,10 +56,11 @@ class OrganizerProfileViewSet(viewsets.ModelViewSet):
                     "tier_prices",
                     "pricing_unit",
                     "event_types",
+                    "updated_at",
                     "category_id",
                     "category__name",
                 )
-                .order_by("id"),
+                .order_by("-updated_at", "-id"),
             ),
             Prefetch(
                 "user__event_photos",

@@ -19,6 +19,7 @@ from apps.organizers.models import OrganizerProfile
 from common.permissions import CanOrganizerManageOwnServices, IsAdmin
 from .models import Service, ServiceCategory
 from .permissions import IsServiceOwner
+from .pricing import TIER_KEYS
 from .serializers import ServiceCategorySerializer, ServiceSerializer
 
 User = get_user_model()
@@ -77,6 +78,11 @@ def _try_delete_stored_file(url: str) -> None:
             default_storage.delete(rel)
 
 
+def _clean_tier_key(raw: str | None) -> str | None:
+    key = str(raw or "").strip().lower()
+    return key if key in TIER_KEYS else None
+
+
 class ServiceCategoryViewSet(viewsets.ModelViewSet):
     queryset = ServiceCategory.objects.all()
     serializer_class = ServiceCategorySerializer
@@ -97,7 +103,8 @@ class ServiceViewSet(viewsets.ModelViewSet):
         "event_type",
         "service_type",
     ]
-    ordering_fields = ["price", "rating", "created_at"]
+    ordering_fields = ["price", "rating", "created_at", "updated_at"]
+    ordering = ["-updated_at", "-id"]
 
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
@@ -123,6 +130,7 @@ class ServiceViewSet(viewsets.ModelViewSet):
                 )
             )
             .all()
+            .order_by("-updated_at", "-id")
         )
         user = self.request.user
         if user.is_authenticated and user.role == User.Role.ADMIN:
@@ -253,3 +261,87 @@ class ServiceImageDestroyView(APIView):
         service.images = images
         service.save(update_fields=["images", "updated_at"])
         return Response({"images": images}, status=status.HTTP_200_OK)
+
+
+class ServiceTierImageUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk, tier):
+        service = get_object_or_404(Service, pk=pk)
+        if not _service_write_allowed(request.user, service):
+            return Response(
+                {"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN
+            )
+        tier_key = _clean_tier_key(tier)
+        if not tier_key:
+            return Response(
+                {"detail": "Invalid tier key."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        upload = request.FILES.get("image")
+        if not upload:
+            return Response(
+                {"detail": "No image file provided (field name 'image')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if upload.size and upload.size > MAX_UPLOAD_BYTES:
+            return Response(
+                {"detail": "Image too large (max 6 MB)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ctype = (upload.content_type or "").lower()
+        if not ctype.startswith("image/"):
+            return Response(
+                {"detail": "File must be an image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        orig = getattr(upload, "name", "") or "upload.jpg"
+        ext = os.path.splitext(orig)[1][:10].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ""):
+            ext = ".jpg"
+        storage_name = f"service_tiers/{tier_key}/{uuid.uuid4().hex}{ext}"
+        data = upload.read()
+        saved = default_storage.save(storage_name, ContentFile(data))
+        url = _absolute_media_url(request, saved)
+        tier_images = service.tier_images or {}
+        if not isinstance(tier_images, dict):
+            tier_images = {}
+        old = str(tier_images.get(tier_key) or "").strip()
+        if old:
+            _try_delete_stored_file(old)
+        tier_images[tier_key] = url
+        service.tier_images = tier_images
+        service.save(update_fields=["tier_images", "updated_at"])
+        return Response(
+            {"url": url, "tier_images": tier_images},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ServiceTierImageDestroyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, tier):
+        service = get_object_or_404(Service, pk=pk)
+        if not _service_write_allowed(request.user, service):
+            return Response(
+                {"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN
+            )
+        tier_key = _clean_tier_key(tier)
+        if not tier_key:
+            return Response(
+                {"detail": "Invalid tier key."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        tier_images = service.tier_images or {}
+        if not isinstance(tier_images, dict) or not str(
+            tier_images.get(tier_key) or ""
+        ).strip():
+            return Response(
+                {"detail": "No image stored for that tier."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        removed = str(tier_images.pop(tier_key))
+        _try_delete_stored_file(removed)
+        service.tier_images = tier_images
+        service.save(update_fields=["tier_images", "updated_at"])
+        return Response({"tier_images": tier_images}, status=status.HTTP_200_OK)

@@ -1,13 +1,42 @@
-from rest_framework import status, viewsets
+from django.db.models import Prefetch
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from common.permissions import IsAdmin, IsClient, IsOrganizer
-from .models import Booking
+from common.permissions import IsClient, IsOrganizer
+from .models import Booking, ClientEvent
 from .permissions import IsBookingOwnerOrOrganizer
-from .serializers import BookingSerializer
+from .serializers import BookingSerializer, ClientEventSerializer
 from .services import notify_client_booking_status, notify_organizer_new_booking
+
+
+class ClientEventViewSet(
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    serializer_class = ClientEventSerializer
+    permission_classes = [IsAuthenticated, IsClient]
+
+    def get_queryset(self):
+        return (
+            ClientEvent.objects.filter(client=self.request.user)
+            .prefetch_related(
+                Prefetch(
+                    "bookings",
+                    queryset=Booking.objects.select_related(
+                        "service", "package", "organizer"
+                    ).order_by("created_at"),
+                )
+            )
+            .order_by("-updated_at")
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(client=self.request.user)
 
 
 class BookingViewSet(viewsets.ModelViewSet):

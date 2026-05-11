@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import Booking
+from .models import Booking, ClientEvent
+
+
+@admin.register(ClientEvent)
+class ClientEventAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "client", "created_at", "updated_at")
+    search_fields = ("title", "client__email")
+    list_filter = ("created_at",)
 
 
 @admin.register(Booking)

@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.packages.models import EventPackage
 from apps.services.models import Service
-from .models import Booking
+from .models import Booking, ClientEvent
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -20,6 +20,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "client_display",
             "organizer",
             "organizer_display",
+            "client_event",
             "service",
             "service_title",
             "package",
@@ -62,6 +63,16 @@ class BookingSerializer(serializers.ModelSerializer):
         u = obj.client
         return (f"{u.first_name} {u.last_name}".strip()) or u.email
 
+    def validate_client_event(self, value):
+        if value is None:
+            return value
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError("Authentication required.")
+        if value.client_id != request.user.id:
+            raise serializers.ValidationError("You can only link your own events.")
+        return value
+
     def validate_event_date(self, value):
         if value < timezone.now().date():
             raise serializers.ValidationError("Event date must be in the future.")
@@ -77,6 +88,10 @@ class BookingSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get("request")
         user = request.user if request else None
+
+        if self.instance and "client_event" in attrs:
+            if user and user.role != user.Role.CLIENT:
+                attrs.pop("client_event", None)
 
         if "organizer_notes" in attrs:
             if not self.instance:
@@ -113,13 +128,20 @@ class BookingSerializer(serializers.ModelSerializer):
         organizer = None
         if service:
             organizer = service.organizer
-            exists = Booking.objects.filter(
+            q = Booking.objects.filter(
                 client=client,
                 service=service,
                 event_date=validated_data["event_date"],
-            ).exists()
-            if exists:
-                raise serializers.ValidationError("Duplicate booking for this service/date.")
+            )
+            ce = validated_data.get("client_event")
+            if ce is not None:
+                q = q.filter(client_event=ce)
+            else:
+                q = q.filter(client_event__isnull=True)
+            if q.exists():
+                raise serializers.ValidationError(
+                    {"non_field_errors": ["Duplicate booking for this service/date."]}
+                )
         elif package:
             service_ids = list(
                 package.items.exclude(service=None).values_list("service_id", flat=True)
@@ -139,3 +161,18 @@ class BookingSerializer(serializers.ModelSerializer):
             **validated_data,
         )
         return booking
+
+
+class ClientEventSerializer(serializers.ModelSerializer):
+    bookings = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClientEvent
+        fields = ("id", "title", "created_at", "updated_at", "bookings")
+        read_only_fields = ("id", "created_at", "updated_at", "bookings")
+
+    def get_bookings(self, obj):
+        qs = obj.bookings.select_related("service", "package", "organizer").order_by(
+            "created_at"
+        )
+        return BookingSerializer(qs, many=True, context=self.context).data
