@@ -1,12 +1,12 @@
 import json
 
-from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth import get_user_model
 
 from .models import Message
 from .serializers import MessageSerializer
+from .services import can_exchange_organizer_client_messages
 
 User = get_user_model()
 
@@ -41,20 +41,36 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not msg:
             return
         payload = await self._serialize(msg)
+        event = {"type": "chat.message", "message": payload}
         for uid in (msg.sender_id, msg.receiver_id):
-            await self.channel_layer.group_send(
-                f"user_{uid}",
-                {"type": "chat.push", "message": payload},
-            )
+            await self.channel_layer.group_send(f"user_{uid}", event)
 
-    async def chat_push(self, event):
-        await self.send(text_data=json.dumps(event["message"]))
+    async def chat_message(self, event):
+        await self.send(
+            text_data=json.dumps({"type": "message", "message": event["message"]})
+        )
+
+    async def chat_read_receipt(self, event):
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "read_receipt",
+                    "reader_id": event["reader_id"],
+                    "message_ids": event["message_ids"],
+                }
+            )
+        )
 
     @database_sync_to_async
     def _create_message(self, sender_id, receiver_id, content):
         if sender_id == receiver_id:
             return None
-        if not User.objects.filter(pk=receiver_id).exists():
+        try:
+            sender = User.objects.get(pk=sender_id)
+            receiver = User.objects.get(pk=receiver_id)
+        except User.DoesNotExist:
+            return None
+        if not can_exchange_organizer_client_messages(sender, receiver):
             return None
         return Message.objects.create(
             sender_id=sender_id, receiver_id=receiver_id, content=content
@@ -62,4 +78,5 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _serialize(self, msg):
+        # No request in WS scope — absolute image URLs omitted; client uses relative or refetch.
         return MessageSerializer(msg).data

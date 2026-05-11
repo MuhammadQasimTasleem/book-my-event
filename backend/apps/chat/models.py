@@ -11,7 +11,8 @@ class Message(BaseModel):
     receiver = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="messages_received"
     )
-    content = models.TextField()
+    content = models.TextField(blank=True, default="")
+    image = models.ImageField(upload_to="chat/%Y/%m/", blank=True, null=True)
     is_read = models.BooleanField(default=False)
 
     def __str__(self) -> str:
