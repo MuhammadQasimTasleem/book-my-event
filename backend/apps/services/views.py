@@ -231,8 +231,9 @@ class ServiceImageUploadView(APIView):
         storage_name = f"service_work/{uuid.uuid4().hex}{ext}"
         data = upload.read()
         saved = default_storage.save(storage_name, ContentFile(data))
-        url = _absolute_media_url(request, saved)
-        images.append(url)
+        rel_url = default_storage.url(saved)
+        url = request.build_absolute_uri(rel_url) if request else rel_url
+        images.append(rel_url)
         service.images = images
         service.save(update_fields=["images", "updated_at"])
         return Response(
@@ -302,14 +303,15 @@ class ServiceTierImageUploadView(APIView):
         storage_name = f"service_tiers/{tier_key}/{uuid.uuid4().hex}{ext}"
         data = upload.read()
         saved = default_storage.save(storage_name, ContentFile(data))
-        url = _absolute_media_url(request, saved)
+        rel_url = default_storage.url(saved)
+        url = request.build_absolute_uri(rel_url) if request else rel_url
         tier_images = service.tier_images or {}
         if not isinstance(tier_images, dict):
             tier_images = {}
         old = str(tier_images.get(tier_key) or "").strip()
         if old:
             _try_delete_stored_file(old)
-        tier_images[tier_key] = url
+        tier_images[tier_key] = rel_url
         service.tier_images = tier_images
         service.save(update_fields=["tier_images", "updated_at"])
         return Response(

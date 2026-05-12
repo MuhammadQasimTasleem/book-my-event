@@ -182,7 +182,8 @@ export default function OrganizerServiceEditPage() {
       });
       for (const f of imageFiles) {
         try {
-          await uploadServiceImage(s.id, f);
+          const { images } = await uploadServiceImage(s.id, f);
+          setRow((prev) => (prev ? { ...prev, images } : prev));
         } catch {
           uploadNote =
             " Saved; one or more new uploads failed — try again or remove images to stay under the limit.";
@@ -192,7 +193,9 @@ export default function OrganizerServiceEditPage() {
         const file = tierImageFiles[tierKey];
         if (!file) continue;
         try {
-          await uploadServiceTierImage(s.id, tierKey, file);
+          const { tier_images } = await uploadServiceTierImage(s.id, tierKey, file);
+          setRow((prev) => (prev ? { ...prev, tier_images } : prev));
+          setTierImageFiles((prev) => ({ ...prev, [tierKey]: null }));
         } catch {
           uploadNote =
             " Saved; one or more tier image uploads failed — try again on that tier.";

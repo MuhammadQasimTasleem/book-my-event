@@ -33,12 +33,18 @@ type Props = {
   event: ClientEventApi;
   /** Compact rows (dashboard home). */
   compact?: boolean;
+  /** Filter to apply to inner bookings */
+  statusFilter?: string;
 };
 
-export function ClientEventPlanCard({ event, compact }: Props) {
+export function ClientEventPlanCard({ event, compact, statusFilter }: Props) {
   const bookings = event.bookings ?? [];
   const pending = bookings.filter((b) => b.booking_status === "pending").length;
   const approved = bookings.filter((b) => b.booking_status === "accepted").length;
+
+  const displayedBookings = statusFilter && statusFilter !== "all"
+    ? bookings.filter((b) => b.booking_status === statusFilter)
+    : bookings;
 
   return (
     <li className="flex flex-col rounded-3xl border border-espresso-200/10 bg-gradient-to-b from-white to-cream-50/40 p-6 shadow-soft">
@@ -73,8 +79,12 @@ export function ClientEventPlanCard({ event, compact }: Props) {
             </Link>
             .
           </li>
+        ) : displayedBookings.length === 0 ? (
+          <li className="rounded-xl border border-dashed border-espresso-200/20 bg-cream-50/50 px-4 py-6 text-center text-sm text-muted">
+            No bookings match the selected filter.
+          </li>
         ) : null}
-        {bookings.map((b) => (
+        {displayedBookings.map((b) => (
           <li
             key={b.id}
             className="rounded-2xl border border-espresso-200/10 bg-white/90 p-4"

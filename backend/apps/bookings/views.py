@@ -54,30 +54,33 @@ class BookingViewSet(viewsets.ModelViewSet):
         return Booking.objects.filter(client=user)
 
     def get_permissions(self):
+        from common.permissions import IsAdmin
         if self.action in ["create"]:
             return [IsAuthenticated(), IsClient()]
         if self.action in ["accept", "reject"]:
-            return [IsAuthenticated(), IsOrganizer()]
+            return [IsAuthenticated()] # Handled in the method, or we can use custom
         return [IsAuthenticated(), IsBookingOwnerOrOrganizer()]
 
     def perform_create(self, serializer):
         booking = serializer.save()
         notify_organizer_new_booking(booking)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrganizer])
+    @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
         booking = self.get_object()
-        if booking.organizer_id != request.user.id:
+        user = request.user
+        if user.role != user.Role.ADMIN and booking.organizer_id != user.id:
             return Response({"message": "Not allowed."}, status=403)
         booking.booking_status = Booking.Status.ACCEPTED
         booking.save(update_fields=["booking_status"])
         notify_client_booking_status(booking)
         return Response({"message": "Booking accepted."})
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrganizer])
+    @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         booking = self.get_object()
-        if booking.organizer_id != request.user.id:
+        user = request.user
+        if user.role != user.Role.ADMIN and booking.organizer_id != user.id:
             return Response({"message": "Not allowed."}, status=403)
         booking.booking_status = Booking.Status.REJECTED
         booking.save(update_fields=["booking_status"])

@@ -97,3 +97,8 @@ class MessageViewSet(viewsets.ModelViewSet):
         if ids:
             _broadcast_read_receipt(partner_id=pid, reader_id=request.user.id, message_ids=ids)
         return Response({"marked": updated})
+
+    @action(detail=False, methods=["get"], url_path="unread-count")
+    def unread_count(self, request):
+        count = Message.objects.filter(receiver=request.user, is_read=False).count()
+        return Response({"unread_count": count})

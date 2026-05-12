@@ -1,5 +1,7 @@
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlparse
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -16,6 +18,24 @@ MAX_EVENT_TYPES = 20
 MAX_EVENT_TYPE_LEN = 64
 MAX_OFFERING_LABEL_LEN = 120
 MAX_TIER_DETAIL_LEN = 2000
+
+
+def _normalize_media_url(request, raw: str | None) -> str | None:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    if s.startswith("http://") or s.startswith("https://"):
+        path = urlparse(s).path or ""
+    else:
+        path = s
+    cleaned = path.lstrip("/")
+    media_prefix = settings.MEDIA_URL.strip("/")
+    if media_prefix and not cleaned.startswith(f"{media_prefix}/"):
+        cleaned = f"{media_prefix}/{cleaned}"
+    final_path = f"/{cleaned}" if cleaned else ""
+    if request and final_path:
+        return request.build_absolute_uri(final_path)
+    return final_path or None
 
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -100,6 +120,33 @@ class ServiceSerializer(serializers.ModelSerializer):
     def get_price_max(self, obj):
         _lo, hi = tier_unit_price_bounds(obj)
         return format(hi, "f")
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+
+        images = data.get("images") or []
+        if isinstance(images, list):
+            data["images"] = [
+                url
+                for url in (_normalize_media_url(request, v) for v in images)
+                if url
+            ]
+
+        tier_images = data.get("tier_images") or {}
+        if isinstance(tier_images, dict):
+            cleaned = {}
+            for key, value in tier_images.items():
+                url = _normalize_media_url(request, value)
+                if url:
+                    cleaned[key] = url
+            data["tier_images"] = cleaned
+
+        primary = data.get("primary_image")
+        if primary:
+            data["primary_image"] = _normalize_media_url(request, primary)
+
+        return data
 
     def validate_tier_prices(self, value):
         if value is None:

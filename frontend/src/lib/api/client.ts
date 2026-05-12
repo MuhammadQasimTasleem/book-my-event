@@ -900,3 +900,10 @@ export async function markChatMessagesRead(partnerUserId: number) {
     body: JSON.stringify({ partner: partnerUserId }),
   });
 }
+
+export async function fetchUnreadMessageCount() {
+  return apiFetch<{ unread_count: number }>("/chat/unread-count/", {
+    method: "GET",
+    auth: true,
+  });
+}

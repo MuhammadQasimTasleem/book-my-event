@@ -193,7 +193,7 @@ export default function BookingsPage() {
         <div className="space-y-10">
           <ul className="grid gap-8 lg:grid-cols-1">
             {filteredEvents.map((ev) => (
-              <ClientEventPlanCard key={ev.id} event={ev} />
+              <ClientEventPlanCard key={ev.id} event={ev} statusFilter={statusFilter} />
             ))}
           </ul>
 
